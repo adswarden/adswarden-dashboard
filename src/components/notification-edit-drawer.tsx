@@ -2,17 +2,16 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Drawer,
-  DrawerContent,
-  DrawerDescription,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer';
 import { Button } from '@/components/ui/button';
+import {
+  CrudResourceDrawerRoot,
+  CrudResourceDrawerHeader,
+  CrudResourceDrawerBody,
+} from '@/components/crud-resource-drawer';
 import { IconLoader2, IconPencil } from '@tabler/icons-react';
 import { NotificationForm } from '@/app/(protected)/notifications/notification-form';
 import { LinkedCampaigns } from '@/components/linked-campaigns';
+import { cn, formatDateTimeUtcEnGb } from '@/lib/utils';
 import type { Notification } from '@/db/schema';
 
 interface NotificationEditDrawerProps {
@@ -20,29 +19,34 @@ interface NotificationEditDrawerProps {
   onOpenChange: (open: boolean) => void;
   notification?: Notification | null;
   notificationId?: string;
-  /** When 'edit', opens directly in edit mode (e.g. from campaign's edit button). Default: 'view' */
   initialMode?: 'view' | 'edit';
 }
 
-/** Inner content with its own state; keyed to reset when opening for a different notification/mode */
+const detailRow =
+  'grid gap-1 px-4 py-3 sm:grid-cols-[minmax(7.5rem,9.5rem)_1fr] sm:items-start sm:gap-4';
+const dtClass = 'text-xs font-medium uppercase tracking-wide text-muted-foreground';
+
+function emptyDash(className?: string) {
+  return <span className={cn('text-muted-foreground', className)}>—</span>;
+}
+
 function NotificationEditDrawerContent({
   notification,
   notificationId,
   initialMode,
-  onOpenChange,
 }: {
   notification?: Notification | null;
   notificationId?: string;
   initialMode: 'view' | 'edit';
-  onOpenChange: (open: boolean) => void;
 }) {
   const router = useRouter();
   const [fetchedNotification, setFetchedNotification] = useState<Notification | null>(null);
+  const [patchedNotification, setPatchedNotification] = useState<Notification | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'edit'>(initialMode);
 
-  const resolvedNotification = notification ?? fetchedNotification;
+  const resolvedNotification = patchedNotification ?? notification ?? fetchedNotification;
   const displayError = !notification && !notificationId ? 'No notification selected' : fetchError;
 
   useEffect(() => {
@@ -78,30 +82,43 @@ function NotificationEditDrawerContent({
     };
   }, [notificationId, notification]);
 
-  const handleSuccess = async () => {
+  const handleSuccess = async (updated?: Notification) => {
+    if (updated) setPatchedNotification(updated);
     setMode('view');
-    onOpenChange(false);
     router.refresh();
   };
 
   const handleCancel = () => {
     setMode('view');
-    onOpenChange(false);
   };
 
-  const handleSwitchToEdit = () => {
-    setMode('edit');
-  };
+  const title =
+    mode === 'edit'
+      ? resolvedNotification
+        ? `Edit · ${resolvedNotification.title}`
+        : 'Edit notification'
+      : resolvedNotification?.title ?? 'Notification';
+  const description =
+    mode === 'view'
+      ? 'Message details and campaigns using this notification'
+      : 'Update title, message, and CTA';
+
+  const headerActions =
+    mode === 'view' && resolvedNotification ? (
+      <Button type="button" size="sm" variant="outline" onClick={() => setMode('edit')}>
+        <IconPencil className="mr-2 h-4 w-4" />
+        Edit
+      </Button>
+    ) : mode === 'edit' ? (
+      <Button type="button" size="sm" variant="ghost" onClick={handleCancel}>
+        Back to details
+      </Button>
+    ) : null;
 
   return (
     <>
-      <DrawerHeader>
-        <DrawerTitle>{mode === 'view' ? 'Notification' : 'Edit Notification'}</DrawerTitle>
-        <DrawerDescription>
-          {mode === 'view' ? 'View notification details and linked campaigns' : 'Update notification details'}
-        </DrawerDescription>
-      </DrawerHeader>
-      <div className="flex-1 overflow-y-auto px-6 pb-8 pt-2">
+      <CrudResourceDrawerHeader title={title} description={description} actions={headerActions} />
+      <CrudResourceDrawerBody>
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <IconLoader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -110,35 +127,75 @@ function NotificationEditDrawerContent({
           <p className="text-sm text-destructive">{displayError}</p>
         ) : resolvedNotification ? (
           mode === 'view' ? (
-            <div className="space-y-6">
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Title</p>
-                <p className="text-base font-medium">{resolvedNotification.title}</p>
-              </div>
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-muted-foreground">Message</p>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{resolvedNotification.message}</p>
-              </div>
-              {resolvedNotification.ctaLink && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-muted-foreground">CTA Link</p>
-                  <a
-                    href={resolvedNotification.ctaLink}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-sm text-primary hover:underline break-all"
-                  >
-                    {resolvedNotification.ctaLink}
-                  </a>
+            <div className="flex min-w-0 flex-col gap-6">
+              <section className="min-w-0 space-y-3" aria-labelledby="notification-details-heading">
+                <h3
+                  id="notification-details-heading"
+                  className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                >
+                  Details
+                </h3>
+                <div className="overflow-hidden rounded-lg border border-border/80 bg-card/40">
+                  <dl className="divide-y divide-border">
+                    <div className={detailRow}>
+                      <dt className={dtClass}>Title</dt>
+                      <dd className="text-sm font-medium leading-snug text-foreground">
+                        {resolvedNotification.title?.trim()
+                          ? resolvedNotification.title
+                          : emptyDash('text-sm')}
+                      </dd>
+                    </div>
+                    <div className={detailRow}>
+                      <dt className={dtClass}>Message</dt>
+                      <dd className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">
+                        {resolvedNotification.message?.trim()
+                          ? resolvedNotification.message
+                          : emptyDash('text-sm')}
+                      </dd>
+                    </div>
+                    <div className={detailRow}>
+                      <dt className={dtClass}>CTA link</dt>
+                      <dd className="min-w-0 text-sm">
+                        {resolvedNotification.ctaLink?.trim() ? (
+                          <a
+                            href={resolvedNotification.ctaLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-primary underline-offset-4 hover:underline break-all"
+                          >
+                            {resolvedNotification.ctaLink}
+                          </a>
+                        ) : (
+                          emptyDash()
+                        )}
+                      </dd>
+                    </div>
+                    <div className={detailRow}>
+                      <dt className={dtClass}>Created</dt>
+                      <dd className="text-sm tabular-nums leading-snug text-muted-foreground" title="UTC">
+                        {formatDateTimeUtcEnGb(resolvedNotification.createdAt)}
+                      </dd>
+                    </div>
+                    <div className={detailRow}>
+                      <dt className={dtClass}>Updated</dt>
+                      <dd className="text-sm tabular-nums leading-snug text-muted-foreground" title="UTC">
+                        {formatDateTimeUtcEnGb(resolvedNotification.updatedAt)}
+                      </dd>
+                    </div>
+                  </dl>
                 </div>
-              )}
-              <div className="pt-2 border-t">
-                <LinkedCampaigns type="notification" entityId={resolvedNotification.id} />
-              </div>
-              <Button variant="outline" size="sm" className="mt-4" onClick={handleSwitchToEdit}>
-                <IconPencil className="mr-2 h-4 w-4" />
-                Edit Notification
-              </Button>
+              </section>
+              <section className="min-w-0 space-y-3" aria-labelledby="notification-campaigns-heading">
+                <h3
+                  id="notification-campaigns-heading"
+                  className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                >
+                  Linked campaigns
+                </h3>
+                <div className="overflow-hidden rounded-lg border border-border/80 bg-card/40">
+                  <LinkedCampaigns type="notification" entityId={resolvedNotification.id} embedded />
+                </div>
+              </section>
             </div>
           ) : (
             <NotificationForm
@@ -149,7 +206,7 @@ function NotificationEditDrawerContent({
             />
           )
         ) : null}
-      </div>
+      </CrudResourceDrawerBody>
     </>
   );
 }
@@ -162,18 +219,15 @@ export function NotificationEditDrawer({
   initialMode = 'view',
 }: NotificationEditDrawerProps) {
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} direction="right">
-      <DrawerContent className="flex h-full flex-col border-l data-[vaul-drawer-direction=right]:h-full data-[vaul-drawer-direction=right]:max-h-none data-[vaul-drawer-direction=right]:sm:max-w-xl">
-        {open && (
-          <NotificationEditDrawerContent
-            key={`${notificationId ?? notification?.id ?? 'none'}-${initialMode}`}
-            notification={notification}
-            notificationId={notificationId}
-            initialMode={initialMode}
-            onOpenChange={onOpenChange}
-          />
-        )}
-      </DrawerContent>
-    </Drawer>
+    <CrudResourceDrawerRoot open={open} onOpenChange={onOpenChange} direction="right">
+      {open ? (
+        <NotificationEditDrawerContent
+          key={`${notificationId ?? notification?.id ?? 'none'}:${initialMode}`}
+          notification={notification}
+          notificationId={notificationId}
+          initialMode={initialMode}
+        />
+      ) : null}
+    </CrudResourceDrawerRoot>
   );
 }

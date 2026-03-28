@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   IconAd2,
   IconBell,
+  IconCreditCard,
   IconDashboard,
   IconDeviceDesktop,
   IconInnerShadowTop,
@@ -12,9 +13,9 @@ import {
   IconUsers,
   IconTargetArrow,
   IconUserSearch,
+  IconRoute,
 } from "@tabler/icons-react"
 
-import { KBarTrigger } from "@/components/kbar-trigger"
 import { NavMain } from "@/components/nav-main"
 import { NavUser } from "@/components/nav-user"
 import {
@@ -34,25 +35,33 @@ type Role = "user" | "admin"
 const overviewItems = [
   { title: "Dashboard", url: "/", icon: IconDashboard },
   { title: "Campaigns", url: "/campaigns", icon: IconTargetArrow },
-  { title: "Visitors", url: "/visitors", icon: IconUserSearch },
-  { title: "Extension Insights", url: "/analytics", icon: IconChartBar },
+  { title: "Users", url: "/users", icon: IconUserSearch },
+  { title: "Events", url: "/events", icon: IconChartBar },
 ]
 
 const contentItems = [
   { title: "Platforms", url: "/platforms", icon: IconDeviceDesktop },
   { title: "Ads", url: "/ads", icon: IconAd2 },
   { title: "Notifications", url: "/notifications", icon: IconBell },
+  { title: "Redirects", url: "/redirects", icon: IconRoute },
 ]
 
 function getNavSections(role: Role) {
+  const overviewForRole =
+    role === "admin"
+      ? overviewItems
+      : overviewItems.filter((i) => i.url !== "/users")
   const sections: { label: string; items: typeof overviewItems }[] = [
-    { label: "Overview", items: overviewItems },
+    { label: "Overview", items: overviewForRole },
   ]
   if (role === "admin") {
     sections.push({ label: "Content", items: contentItems })
     sections.push({
-      label: "Admin",
-      items: [{ title: "Users", url: "/users", icon: IconUsers }],
+      label: "Team",
+      items: [
+        { title: "Members", url: "/members", icon: IconUsers },
+        { title: "Payments", url: "/payments", icon: IconCreditCard },
+      ],
     })
   }
   return sections
@@ -94,7 +103,6 @@ export function AppSidebar({
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <KBarTrigger />
         <NavUser user={user} />
       </SidebarFooter>
     </Sidebar>

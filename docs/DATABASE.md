@@ -2,7 +2,7 @@
 
 ## Overview
 
-The database uses PostgreSQL with Drizzle ORM for type-safe database operations. The schema includes platforms, ads, notifications (global), notification_reads (per-user pull tracking), and visitors (event-based: one row per campaign serve, replaces former request_logs and campaign_logs).
+The database uses PostgreSQL with Drizzle ORM for type-safe database operations. The live Drizzle schema includes platforms, ads, notifications (content), campaigns, **`end_users`** / **`enduser_sessions`** (extension auth: **provision**, login, register; **one session per user**; Bearer tokens), **payments**, and **`enduser_events`** (one row per extension serve or `request`; `enduser_id` is the extension user id). **`end_users`** rows may be **anonymous** (`installation_id`, nullable `email`/`password_hash`, **`short_id`** for display) until the user registers. Better Auth’s **`user`** / **`session`** tables are for dashboard admins only. A legacy **`notification_reads`** table may still exist in older databases; the current extension API does not use it (see **`enduser_events`** + campaign rules).
 
 ## Entity Relationship Diagram
 
@@ -10,13 +10,12 @@ The database uses PostgreSQL with Drizzle ORM for type-safe database operations.
 erDiagram
     platforms ||--o{ ads : "has"
     notifications ||--o{ notification_reads : "pulled by"
-    visitors }o--|| campaigns : "served by"
+    enduser_events }o--|| campaigns : "served by"
     
     platforms {
         uuid id PK
         varchar name
         varchar domain
-        boolean is_active
         timestamp created_at
         timestamp updated_at
     }
@@ -43,13 +42,15 @@ erDiagram
     notification_reads {
         uuid id PK
         uuid notification_id FK
-        varchar visitor_id
+        varchar enduser_id
         timestamp read_at
     }
     
-    visitors {
+    enduser_events {
         uuid id PK
-        varchar visitor_id
+        varchar enduser_id
+        varchar email
+        enum plan
         uuid campaign_id FK
         varchar domain
         enum type
@@ -69,7 +70,6 @@ Stores platform/domain configurations where ads and notifications will be displa
 | `id` | uuid | PRIMARY KEY, DEFAULT gen_random_uuid() | Unique platform identifier |
 | `name` | varchar(255) | NOT NULL | Platform name (e.g., "Instagram", "Facebook") |
 | `domain` | varchar(255) | NOT NULL | Domain URL (e.g., "https://www.instagram.com/") |
-| `is_active` | boolean | NOT NULL, DEFAULT true | Whether platform is active |
 | `created_at` | timestamp with time zone | NOT NULL, DEFAULT now() | Creation timestamp |
 | `updated_at` | timestamp with time zone | NOT NULL, DEFAULT now() | Last update timestamp |
 
@@ -83,7 +83,6 @@ Stores platform/domain configurations where ads and notifications will be displa
 **Usage:**
 - Admin creates platforms to define where content will be shown
 - Extension API uses domain to filter ads/notifications
-- Platform can be activated/deactivated without deletion
 
 ---
 
@@ -146,53 +145,50 @@ Stores notification messages with date ranges and multi-platform support.
 | `updated_at` | timestamp with time zone | NOT NULL, DEFAULT now() | Last update timestamp |
 
 **Relationships:**
-- One-to-many with `notification_reads` (via `notification_id`)
+- Referenced by **`campaigns.notification_id`** (notification campaigns)
 
 **Indexes:**
 - Primary key on `id`
 
-**Usage:**
-- Admin creates notifications with messages and date ranges (global; no domain/platform link)
-- Extension API returns active notifications (where `start_date <= now() <= end_date`) that this user has not yet pulled (see `notification_reads`)
-- `is_read` flag for admin tracking (not used by extension)
-
-**Date filtering:** Only notifications where the current time is between `start_date` and `end_date` are considered active.
+**Usage (current app):**
+- Notifications are **content** rows (title, message, CTA). **Scheduling, targeting, and frequency** live on **`campaigns`** where `campaign_type = 'notification'`.
+- Extension **`POST /api/extension/ad-block`** authenticates with **`Authorization: Bearer`** (session in **`enduser_sessions`**). Eligibility and “only once” / caps use **`enduser_events`** counts per `enduser_id` and `campaign_id`, not request-body `endUserId`.
 
 ---
 
-### notification_reads
+### notification_reads (legacy)
 
-Tracks which notifications each user has already pulled (so each notification is shown only once per user).
+**Not present in `src/db/schema.ts`.** Older deployments may still have this table; the current `/api/extension/ad-block` implementation does **not** read or write it.
 
 | Column | Type | Constraints | Description |
 |--------|------|------------|-------------|
 | `id` | uuid | PRIMARY KEY, DEFAULT gen_random_uuid() | Unique record identifier |
 | `notification_id` | uuid | NOT NULL, FOREIGN KEY | Notification reference |
-| `visitor_id` | varchar(255) | NOT NULL | Extension-provided user ID (same as in request body) |
-| `read_at` | timestamp with time zone | NOT NULL, DEFAULT now() | When the user pulled this notification |
+| `enduser_id` | varchar(255) | NOT NULL | Historical: client id string |
+| `read_at` | timestamp with time zone | NOT NULL, DEFAULT now() | When the row was recorded |
 
 **Relationships:**
-- Many-to-one with `notifications` (via `notification_id`), ON DELETE CASCADE
+- Many-to-one with `notifications` (via `notification_id`), ON DELETE CASCADE (if table exists)
 
-**Unique constraint:** `(notification_id, visitor_id)` — one row per user per notification.
-
-**Usage:**
-- When the extension calls the API with `requestType: "notification"` (or omits it), the API returns only active notifications that have no row in `notification_reads` for that `visitorId`
-- After returning notifications, the API inserts rows into `notification_reads` so they are not returned again for that user
+**Unique constraint (if table exists):** `(notification_id, enduser_id)` — one row per user per notification.
 
 ---
 
-### visitors
+### enduser_events
 
-Event-based table: one row per campaign serve. Replaces former `request_logs`, `campaign_logs`, and `campaign_visitor_views` tables.
+Event-based table: one row per extension serve or logged request. Replaces former `request_logs`, `campaign_logs`, and `campaign_visitor_views` tables. **Not** the Better Auth `user` table (dashboard admins).
 
 | Column | Type | Constraints | Description |
 |--------|------|------------|-------------|
 | `id` | uuid | PRIMARY KEY, DEFAULT gen_random_uuid() | Unique event identifier |
-| `visitor_id` | varchar(255) | NOT NULL | Extension-provided visitor identifier |
-| `campaign_id` | uuid | NULL, FK → campaigns.id | Campaign that served content (null = not used; we only insert when serving) |
-| `domain` | varchar(255) | NOT NULL | Domain where request occurred (e.g. `instagram.com`, `extension`) |
-| `type` | visitor_event_type | NOT NULL | `ad` \| `notification` \| `popup` |
+| `enduser_id` | varchar(255) | NOT NULL | Extension user id: **`end_users.id`** as a string (Bearer-authenticated clients) |
+| `email` | varchar(255) | NULL | Copy of extension user email when set (null for anonymous users) |
+| `plan` | enduser_user_plan | NOT NULL | `trial` \| `paid` (aligned with **`end_users.plan`**) |
+| `campaign_id` | uuid | NULL, FK → campaigns.id | Campaign that served content (null for e.g. `request`-only rows) |
+| `domain` | varchar(255) | NULL | Domain where request occurred |
+| `type` | enduser_event_type | NOT NULL | `ad` \| `notification` \| `popup` \| `request` \| `redirect` |
+| `country` | varchar(2) | NULL | Geo hint from edge headers |
+| `status_code`, `user_agent` | integer, text | NULL | Telemetry when present |
 
 **Relationships:**
 - Many-to-one with `campaigns` (via `campaign_id`)
@@ -200,14 +196,14 @@ Event-based table: one row per campaign serve. Replaces former `request_logs`, `
 **Indexes:**
 - Primary key on `id`
 - `(campaign_id, created_at DESC)` for campaign logs
-- `(visitor_id, campaign_id)` for frequency tracking
-- `(visitor_id, created_at DESC)` for visitor analytics
+- `(enduser_id, campaign_id)` for frequency tracking
+- `(enduser_id, created_at DESC)` for end-user analytics
 
 **Usage:**
-- Inserted only when content is actually served to a user (one row per campaign served)
-- Campaign logs: `WHERE campaign_id = :id AND created_at >= campaign.start_date`
-- Frequency: `COUNT(*) WHERE visitor_id = :v AND campaign_id = :c` (replaces campaign_visitor_views)
-- Unique visitors: `COUNT(DISTINCT visitor_id)`
+- Inserted when the extension hits `/api/extension/ad-block` (one row per campaign served, or a `request` row when nothing served)
+- Campaign logs: `WHERE campaign_id = :id`
+- Frequency: `COUNT(*) WHERE enduser_id = :v AND campaign_id = :c`
+- Unique extension end users: `COUNT(DISTINCT enduser_id)`
 
 ---
 
@@ -231,7 +227,7 @@ Ad status enumeration.
 - End date passes → `expired` (automatic)
 - Admin deactivates → `inactive`
 
-### visitor_event_type
+### enduser_event_type
 
 Event type enumeration for analytics logging.
 
@@ -240,7 +236,7 @@ Event type enumeration for analytics logging.
 - `popup` - Popup ad served
 
 **Usage:**
-- Used in `visitors` table
+- Used in `enduser_events` table
 - Indicates what type of content was served to the user
 
 ---
@@ -255,16 +251,16 @@ Event type enumeration for analytics logging.
    - Foreign key: `ads.platform_id` → `platforms.id`
    - On delete: SET NULL (platform deletion doesn't delete ads)
 
-2. **campaigns → visitors** (logical)
-   - One campaign can have many visitor events
+2. **campaigns → enduser_events** (logical)
+   - One campaign can have many end-user events
    - Events reference campaign via `campaign_id` (FK)
 
-### Notification Read Tracking
+### Extension telemetry and notification delivery
 
-1. **notifications → notification_reads**
-   - Notifications are global (no platform link)
-   - `notification_reads` tracks which notifications each user (by `visitor_id`) has already pulled
-   - Unique on `(notification_id, visitor_id)`; foreign key `notification_id` → `notifications.id` ON DELETE CASCADE
+1. **`end_users` / `enduser_sessions` → `enduser_events`**
+   - **Provision**, login, or register creates/replaces the row in **`enduser_sessions`** (single session per user); ad-block resolves the user from the Bearer token.
+   - Each qualifying serve (or a `request` row when nothing is served) appends rows to **`enduser_events`** for frequency and analytics.
+2. **Legacy `notification_reads`** (if still in DB): not used by the current extension route; prefer **`enduser_events`** for per-user/campaign history.
 
 ---
 
@@ -275,15 +271,23 @@ Event type enumeration for analytics logging.
 - Auto-generated using `gen_random_uuid()`
 
 ### Foreign Keys
-- `ads.platform_id` → `platforms.id`
-- `notification_reads.notification_id` → `notifications.id` (ON DELETE CASCADE)
+- `campaigns` reference `ads`, `notifications`, `redirects`, and Better Auth `user` (creator)
+- `enduser_sessions.end_user_id` → `end_users.id` (ON DELETE CASCADE)
+- `payments.end_user_id` → `end_users.id` (ON DELETE CASCADE)
+- `enduser_events.campaign_id` → `campaigns.id` (ON DELETE CASCADE)
+- If present: `notification_reads.notification_id` → `notifications.id` (ON DELETE CASCADE)
 
 ### Unique Constraints
-- `notification_reads (notification_id, visitor_id)` (unique)
+- `end_users.email` (unique; multiple NULLs allowed)
+- `end_users.short_id` (unique)
+- `end_users.installation_id` (unique; multiple NULLs allowed)
+- `end_users`: check **`email IS NOT NULL OR installation_id IS NOT NULL`**
+- `enduser_sessions.token` (unique)
+- If present: `notification_reads (notification_id, enduser_id)` (unique)
 
-### Implicit Indexes
-- Foreign keys are automatically indexed
-- Primary keys are automatically indexed
+### Indexes
+- Primary keys are indexed automatically.
+- **PostgreSQL does not create indexes on foreign-key columns by themselves.** Add explicit indexes when you filter or join on those columns (e.g. migration `0004_campaigns_content_fk_indexes` adds btree indexes on `campaigns.ad_id`, `campaigns.notification_id`, and `campaigns.redirect_id` for linked-campaign list queries and aggregates).
 
 ---
 
@@ -374,8 +378,8 @@ const activeAds = await db
 ### Fetching Active Notifications Not Yet Pulled by User
 
 ```typescript
-// Get active notifications that this visitor has not yet pulled.
-// Date filtering lives on campaigns; join notifications → campaignNotification → campaigns.
+// Get active notifications that this end user has not yet pulled.
+// Date filtering lives on campaigns; join notifications → campaigns.notification_id.
 const activeNotifications = await db
   .select({
     id: notifications.id,
@@ -383,13 +387,12 @@ const activeNotifications = await db
     message: notifications.message,
   })
   .from(notifications)
-  .innerJoin(campaignNotification, eq(campaignNotification.notificationId, notifications.id))
-  .innerJoin(campaigns, eq(campaigns.id, campaignNotification.campaignId))
+  .innerJoin(campaigns, eq(campaigns.notificationId, notifications.id))
   .leftJoin(
     notificationReads,
     and(
       eq(notificationReads.notificationId, notifications.id),
-      eq(notificationReads.visitorId, visitorId)
+      eq(notificationReads.endUserId, endUserId)
     )
   )
   .where(
@@ -402,13 +405,13 @@ const activeNotifications = await db
   );
 ```
 
-### Inserting Visitor Events (When Serving)
+### Inserting end-user events (when serving)
 
 ```typescript
 // One row per campaign served. Insert only when content is actually returned to the user.
-await db.insert(visitors).values(
+await db.insert(enduserEvents).values(
   servedCampaigns.map((c) => ({
-    visitorId,
+    endUserId,
     campaignId: c.id,
     domain,
     type: c.campaignType === 'notification' ? 'notification' : c.campaignType === 'popup' ? 'popup' : 'ad',
@@ -439,4 +442,4 @@ await db.insert(visitors).values(
 - Add soft delete pattern (deleted_at timestamp)
 - Add versioning/audit trail for content changes
 - Add full-text search indexes for descriptions/messages
-- Consider partitioning for large `visitors` table
+- Consider partitioning for large `enduser_events` table

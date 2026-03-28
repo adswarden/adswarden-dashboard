@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation';
 import { database as db } from '@/db';
 import { ads } from '@/db/schema';
 import { AdsTableWithDrawer } from '@/components/ads-table-with-drawer';
+import { getLinkedCampaignCountByAdId } from '@/lib/campaign-linked-counts';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,8 +16,17 @@ export default async function AdsPage({ searchParams }: PageProps) {
   if (!sessionWithRole) redirect('/login');
   if (sessionWithRole.role !== 'admin') redirect('/');
 
-  const allAds = await db.select().from(ads).orderBy(ads.createdAt);
+  const [allAds, linkedByAdId] = await Promise.all([
+    db.select().from(ads).orderBy(ads.createdAt),
+    getLinkedCampaignCountByAdId(),
+  ]);
+
+  const adsWithCounts = allAds.map((a) => ({
+    ...a,
+    linkedCampaignCount: linkedByAdId.get(a.id) ?? 0,
+  }));
+
   const { edit } = await searchParams;
 
-  return <AdsTableWithDrawer ads={allAds} initialEditId={edit ?? null} />;
+  return <AdsTableWithDrawer ads={adsWithCounts} initialEditId={edit ?? null} />;
 }

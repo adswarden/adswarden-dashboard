@@ -1,8 +1,11 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useKBar } from "kbar"
+import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
 import {
+  IconCommand,
   IconDotsVertical,
   IconLogout,
   IconUserCircle,
@@ -17,7 +20,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -39,72 +41,89 @@ export function NavUser({
     avatar?: string
   }
 }) {
+  const { query } = useKBar()
   const { isMobile } = useSidebar()
+  const pathname = usePathname()
   const router = useRouter()
+  const isAccountActive = pathname === "/account"
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
   const handleLogout = async () => {
     try {
-      const { authClient } = await import('@/lib/auth-client')
+      const { authClient } = await import("@/lib/auth-client")
       await authClient.signOut()
-      toast.success('Logged out successfully')
-      router.push('/login')
+      toast.success("Logged out successfully")
+      router.push("/login")
       router.refresh()
     } catch {
-      toast.error('Failed to logout')
+      toast.error("Failed to logout")
     }
   }
 
-  const initials = user.name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
-
-  if (!mounted) {
-    return (
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <SidebarMenuButton size="lg" className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
-            <Avatar className="h-8 w-8 rounded-lg grayscale">
-              {user.avatar && <AvatarImage src={user.avatar} alt={user.name} />}
-              <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-            </Avatar>
-            <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-medium">{user.name}</span>
-              <span className="text-muted-foreground truncate text-xs">
-                {user.email}
-              </span>
-            </div>
-            <IconDotsVertical className="ml-auto size-4" />
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    )
-  }
+  const initials =
+    user.name
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((n) => n.charAt(0))
+      .join("")
+      .toUpperCase()
+      .slice(0, 2) ||
+    user.email
+      .slice(0, 2)
+      .toUpperCase() ||
+    "?"
 
   return (
     <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton
+          size="lg"
+          tooltip="Search (⌘K)"
+          onClick={() => query.toggle()}
+        >
+          <IconCommand className="size-4 shrink-0" />
+          <span>Search</span>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+      <SidebarMenuItem>
+        <SidebarMenuButton size="lg" asChild isActive={isAccountActive} tooltip="Account">
+          <Link href="/account" className="cursor-pointer">
+            <IconUserCircle className="size-4 shrink-0" />
+            <span>Account</span>
+          </Link>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <SidebarMenuButton
               size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              type="button"
+              aria-label="Account menu — theme and sign out"
+              className="min-h-12 min-w-0 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <Avatar className="h-8 w-8 rounded-lg grayscale">
-                {user.avatar && <AvatarImage src={user.avatar} alt={user.name} />}
-                <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
-              </Avatar>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{user.name}</span>
-                <span className="text-muted-foreground truncate text-xs">
-                  {user.email}
-                </span>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Avatar
+                  className={`h-8 w-8 shrink-0 rounded-lg ${!mounted ? "grayscale" : ""}`}
+                >
+                  {user.avatar && <AvatarImage src={user.avatar} alt="" />}
+                  <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
+                </Avatar>
+                <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
+                  <span className="truncate font-medium">{user.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {user.email}
+                  </span>
+                </div>
               </div>
-              <IconDotsVertical className="ml-auto size-4" />
+              <div
+                className="inline-flex size-9 shrink-0 items-center justify-center rounded-md text-sidebar-foreground pointer-events-none"
+                aria-hidden
+              >
+                <IconDotsVertical className="size-[18px]" stroke={2} />
+              </div>
             </SidebarMenuButton>
           </DropdownMenuTrigger>
           <DropdownMenuContent
@@ -113,30 +132,29 @@ export function NavUser({
             align="end"
             sideOffset={4}
           >
-            <DropdownMenuLabel className="p-0 font-normal">
-              <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                <Avatar className="h-8 w-8 rounded-lg">
-                  {user.avatar && <AvatarImage src={user.avatar} alt={user.name} />}
+            <DropdownMenuItem asChild className="p-0">
+              <Link
+                href="/account"
+                className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-2.5 text-left text-sm outline-none hover:bg-accent hover:text-accent-foreground data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+                aria-label={`Account — ${user.name}`}
+              >
+                <Avatar className="h-8 w-8 shrink-0 rounded-lg">
+                  {user.avatar && <AvatarImage src={user.avatar} alt="" />}
                   <AvatarFallback className="rounded-lg">{initials}</AvatarFallback>
                 </Avatar>
-                <div className="grid flex-1 text-left text-sm leading-tight">
+                <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
-                  <span className="text-muted-foreground truncate text-xs">
+                  <span className="truncate text-xs text-muted-foreground">
                     {user.email}
                   </span>
                 </div>
-              </div>
-            </DropdownMenuLabel>
+              </Link>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <ThemeMenuContent />
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled>
-              <IconUserCircle />
-              Account
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleLogout}>
-              <IconLogout />
+              <IconLogout className="size-4" />
               Log out
             </DropdownMenuItem>
           </DropdownMenuContent>

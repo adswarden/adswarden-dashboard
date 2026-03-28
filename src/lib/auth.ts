@@ -9,6 +9,11 @@ import { eq, count } from 'drizzle-orm';
 
 export const auth = betterAuth({
   plugins: [admin()],
+  session: {
+    // Seconds; sensitive routes (revoke session, change password) require a "fresh" session.
+    // Default is 24h — extend so weekend idle users are not blocked from account security actions.
+    freshAge: 60 * 60 * 24 * 7,
+  },
   database: drizzleAdapter(db, {
     provider: 'pg',
     schema: {

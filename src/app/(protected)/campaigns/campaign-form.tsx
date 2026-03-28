@@ -20,42 +20,42 @@ import { IconLoader2, IconX, IconInfoCircle, IconPlus } from '@tabler/icons-reac
 import { toast } from 'sonner';
 import { COUNTRIES } from '@/lib/countries';
 import { PlatformAddDrawer } from '@/components/platform-add-drawer';
+import { DateTimePicker } from '@/components/ui/date-time-picker';
+import { TimeSelect } from '@/components/ui/time-select';
+import { isoOrDateToLocalDatetimeValue } from '@/lib/datetime-local-format';
+import type { CampaignFormInitial, CampaignFormOptionLists } from './campaign-form-types';
 
-type CampaignType = 'ads' | 'popup' | 'notification';
+type CampaignType = 'ads' | 'popup' | 'notification' | 'redirect';
 type FrequencyType = 'full_day' | 'time_based' | 'only_once' | 'always' | 'specific_count';
 type TargetAudience = 'new_users' | 'all_users';
 
 type CampaignStatus = 'active' | 'inactive' | 'scheduled' | 'expired';
 
-interface CampaignFormProps {
-  campaign?: {
-    id: string;
-    name: string;
-    targetAudience: string;
-    campaignType: string;
-    frequencyType: string;
-    frequencyCount: number | null;
-    timeStart: string | null;
-    timeEnd: string | null;
-    status: string;
-    startDate: string | null;
-    endDate: string | null;
-    platformIds: string[];
-    countryCodes?: string[];
-    adId: string | null;
-    notificationId: string | null;
-  };
-  platforms: { id: string; name: string; domain: string }[];
-  adsList: { id: string; name: string }[];
-  notificationsList: { id: string; title: string }[];
+interface CampaignFormProps extends CampaignFormOptionLists {
+  campaign?: CampaignFormInitial;
   mode: 'create' | 'edit';
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+/** Groups fields under a labelled region (matches drawer “Details” / resource panels). */
+function FormSection({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
-    <h3 className="text-sm font-medium text-foreground tracking-tight">
+    <section className="min-w-0 space-y-3" aria-labelledby={id}>
+      <h2
+        id={id}
+        className="text-xs font-semibold uppercase tracking-wide text-muted-foreground leading-snug"
+      >
+        {title}
+      </h2>
       {children}
-    </h3>
+    </section>
   );
 }
 
@@ -81,6 +81,7 @@ export function CampaignForm({
   platforms,
   adsList,
   notificationsList,
+  redirectsList,
   mode,
 }: CampaignFormProps) {
   const router = useRouter();
@@ -90,7 +91,7 @@ export function CampaignForm({
   const [campaignType, setCampaignType] = useState<CampaignType>((campaign?.campaignType as CampaignType) ?? 'ads');
   const handleCampaignTypeChange = (v: CampaignType) => {
     setCampaignType(v);
-    if (v === 'notification') setPlatformIds([]);
+    if (v === 'notification' || v === 'redirect') setPlatformIds([]);
   };
   const [frequencyType, setFrequencyType] = useState<FrequencyType>((campaign?.frequencyType as FrequencyType) ?? 'always');
   const [frequencyCount, setFrequencyCount] = useState(campaign?.frequencyCount?.toString() ?? '');
@@ -100,12 +101,13 @@ export function CampaignForm({
   const [countryCodes, setCountryCodes] = useState<string[]>(campaign?.countryCodes ?? []);
   const [adId, setAdId] = useState<string>(campaign?.adId ?? '');
   const [notificationId, setNotificationId] = useState<string>(campaign?.notificationId ?? '');
+  const [redirectId, setRedirectId] = useState<string>(campaign?.redirectId ?? '');
   const [status, setStatus] = useState<CampaignStatus>((campaign?.status as CampaignStatus) ?? 'inactive');
   const [startDate, setStartDate] = useState(
-    campaign?.startDate ? new Date(campaign.startDate).toISOString().slice(0, 16) : ''
+    campaign?.startDate ? isoOrDateToLocalDatetimeValue(campaign.startDate) : ''
   );
   const [endDate, setEndDate] = useState(
-    campaign?.endDate ? new Date(campaign.endDate).toISOString().slice(0, 16) : ''
+    campaign?.endDate ? isoOrDateToLocalDatetimeValue(campaign.endDate) : ''
   );
   const [addPlatformDrawerOpen, setAddPlatformDrawerOpen] = useState(false);
 
@@ -114,7 +116,7 @@ export function CampaignForm({
 
     // Validation: at least one domain (platform) - not required for notifications
 
-    if (campaignType !== 'notification' && !platformIds.length) {
+    if (campaignType !== 'notification' && campaignType !== 'redirect' && !platformIds.length) {
       toast.error('Select at least one domain (platform)');
       return;
     }
@@ -128,6 +130,11 @@ export function CampaignForm({
     } else if (campaignType === 'notification') {
       if (!notificationId?.trim()) {
         toast.error('Select a notification');
+        return;
+      }
+    } else if (campaignType === 'redirect') {
+      if (!redirectId?.trim()) {
+        toast.error('Select a redirect');
         return;
       }
     }
@@ -147,10 +154,11 @@ export function CampaignForm({
         status,
         startDate: startDate || null,
         endDate: endDate || null,
-        platformIds: campaignType === 'notification' ? [] : platformIds,
+        platformIds: campaignType === 'notification' || campaignType === 'redirect' ? [] : platformIds,
         countryCodes,
         adId: (campaignType === 'ads' || campaignType === 'popup') ? adId || null : null,
         notificationId: campaignType === 'notification' ? notificationId || null : null,
+        redirectId: campaignType === 'redirect' ? redirectId || null : null,
       };
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json();
@@ -174,11 +182,9 @@ export function CampaignForm({
   return (
     <>
       <Card>
-        <CardContent className="pt-6">
+        <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
-            {/* Basic Info */}
-            <div className="space-y-4">
-              <SectionTitle>Basic Info</SectionTitle>
+            <FormSection id="campaign-form-basic-heading" title="Basic info">
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="name">Name *</Label>
@@ -203,6 +209,7 @@ export function CampaignForm({
                         <SelectItem value="ads">Ads</SelectItem>
                         <SelectItem value="popup">Popup</SelectItem>
                         <SelectItem value="notification">Notification</SelectItem>
+                        <SelectItem value="redirect">Redirect</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -220,13 +227,11 @@ export function CampaignForm({
                   </div>
                 </div>
               </div>
-            </div>
+            </FormSection>
 
             <Separator />
 
-            {/* Schedule & Frequency */}
-            <div className="space-y-4">
-              <SectionTitle>Schedule & Frequency</SectionTitle>
+            <FormSection id="campaign-form-schedule-heading" title="Schedule & frequency">
               <div className="space-y-4">
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2">
@@ -262,21 +267,19 @@ export function CampaignForm({
                   <div className="grid grid-cols-2 gap-4 max-w-md">
                     <div className="space-y-2">
                       <Label htmlFor="timeStart">Start time</Label>
-                      <Input
+                      <TimeSelect
                         id="timeStart"
-                        type="time"
                         value={timeStart}
-                        onChange={(e) => setTimeStart(e.target.value)}
+                        onChange={setTimeStart}
                         disabled={isLoading}
                       />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="timeEnd">End time</Label>
-                      <Input
+                      <TimeSelect
                         id="timeEnd"
-                        type="time"
                         value={timeEnd}
-                        onChange={(e) => setTimeEnd(e.target.value)}
+                        onChange={setTimeEnd}
                         disabled={isLoading}
                       />
                     </div>
@@ -286,35 +289,34 @@ export function CampaignForm({
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="startDate">Start date & time</Label>
-                    <Input
+                    <DateTimePicker
                       id="startDate"
-                      type="datetime-local"
                       value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      onChange={setStartDate}
                       disabled={isLoading}
+                      placeholder="Pick start date & time"
                     />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="endDate">End date & time</Label>
-                    <Input
+                    <DateTimePicker
                       id="endDate"
-                      type="datetime-local"
                       value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
+                      onChange={setEndDate}
                       disabled={isLoading}
+                      allowClear
+                      placeholder="Pick end date & time"
                     />
                   </div>
                 </div>
               </div>
-            </div>
+            </FormSection>
 
             <Separator />
 
-            {/* Targeting */}
-            <div className="space-y-4">
-              <SectionTitle>Targeting</SectionTitle>
+            <FormSection id="campaign-form-targeting-heading" title="Targeting">
               <div className="space-y-4">
-                {campaignType !== 'notification' && (
+                {campaignType !== 'notification' && campaignType !== 'redirect' && (
                 <div className="space-y-2">
                   <Label>Targeted websites (platforms) *</Label>
                   <MultiSelectContainer>
@@ -359,6 +361,12 @@ export function CampaignForm({
                 {campaignType === 'notification' && (
                   <InfoHint>Notifications are served everywhere — no domain restriction.</InfoHint>
                 )}
+                {campaignType === 'redirect' && (
+                  <InfoHint>
+                    Redirect targeting uses the source domain defined on each redirect — no platform
+                    selection here.
+                  </InfoHint>
+                )}
                 <div className="space-y-2">
                   <Label>Countries to serve</Label>
                   <InfoHint>Leave empty to serve in all countries</InfoHint>
@@ -388,14 +396,16 @@ export function CampaignForm({
                   </MultiSelectContainer>
                 </div>
               </div>
-            </div>
+            </FormSection>
 
-            {(campaignType === 'ads' || campaignType === 'popup' || campaignType === 'notification') && (
+            {(campaignType === 'ads' ||
+              campaignType === 'popup' ||
+              campaignType === 'notification' ||
+              campaignType === 'redirect') && (
               <>
                 <Separator />
-                {/* Content */}
-                <div className="space-y-4">
-                  <SectionTitle>Content</SectionTitle>
+                <FormSection id="campaign-form-content-heading" title="Content">
+                  <div className="space-y-4">
                   {(campaignType === 'ads' || campaignType === 'popup') && (
                     <div className="space-y-2">
                       <Label>{campaignType === 'popup' ? 'Pop up' : 'Ad'} *</Label>
@@ -403,7 +413,12 @@ export function CampaignForm({
                         <SelectTrigger className="w-full max-w-md"><SelectValue placeholder="Select ad" /></SelectTrigger>
                         <SelectContent>
                           {adsList.map((a) => (
-                            <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                            <SelectItem key={a.id} value={a.id}>
+                              {a.name}
+                              {a.linkedCampaignCount > 0
+                                ? ` (${a.linkedCampaignCount} campaign${a.linkedCampaignCount === 1 ? '' : 's'})`
+                                : ''}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -416,29 +431,52 @@ export function CampaignForm({
                         <SelectTrigger className="w-full max-w-md"><SelectValue placeholder="Select notification" /></SelectTrigger>
                         <SelectContent>
                           {notificationsList.map((n) => (
-                            <SelectItem key={n.id} value={n.id}>{n.title}</SelectItem>
+                            <SelectItem key={n.id} value={n.id}>
+                              {n.title}
+                              {n.linkedCampaignCount > 0
+                                ? ` (${n.linkedCampaignCount} campaign${n.linkedCampaignCount === 1 ? '' : 's'})`
+                                : ''}
+                            </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                   )}
-                </div>
+                  {campaignType === 'redirect' && (
+                    <div className="space-y-2">
+                      <Label>Redirect *</Label>
+                      <Select value={redirectId} onValueChange={setRedirectId}>
+                        <SelectTrigger className="w-full max-w-md"><SelectValue placeholder="Select redirect" /></SelectTrigger>
+                        <SelectContent>
+                          {redirectsList.map((r) => (
+                            <SelectItem key={r.id} value={r.id}>
+                              {r.name}
+                              {r.linkedCampaignCount > 0
+                                ? ` (${r.linkedCampaignCount} campaign${r.linkedCampaignCount === 1 ? '' : 's'})`
+                                : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  </div>
+                </FormSection>
               </>
             )}
 
             <Separator />
 
-            {/* Actions */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">
                 {isLoading && <IconLoader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {mode === 'create' ? 'Create' : 'Update'}
+                {mode === 'create' ? 'Create campaign' : 'Save changes'}
               </Button>
               <Link
-                href="/campaigns"
-                className="text-sm text-muted-foreground hover:text-foreground transition-colors text-center"
+                href={mode === 'edit' && campaign?.id ? `/campaigns/${campaign.id}` : '/campaigns'}
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground sm:text-right"
               >
-                Cancel
+                {mode === 'edit' ? 'Back to campaign' : 'Cancel'}
               </Link>
             </div>
           </form>

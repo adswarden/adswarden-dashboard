@@ -14,8 +14,8 @@ import type { Ad } from '@/db/schema';
 interface AdFormProps {
   ad?: Ad;
   mode: 'create' | 'edit';
-  /** When provided, called on success instead of navigating. Create passes adId, edit passes nothing. */
-  onSuccess?: (adId?: string) => void | Promise<void>;
+  /** When provided, called on success instead of navigating. Receives the saved row from the API. */
+  onSuccess?: (saved?: Ad) => void | Promise<void>;
   /** When provided, called on Cancel instead of navigating (e.g. to close drawer) */
   onCancel?: () => void;
 }
@@ -58,7 +58,7 @@ export function AdForm({ ad, mode, onSuccess, onCancel }: AdFormProps) {
 
       toast.success(mode === 'create' ? 'Ad created successfully' : 'Ad updated successfully');
       if (onSuccess) {
-        await onSuccess(mode === 'create' ? data?.id : undefined);
+        await onSuccess(data as Ad);
       } else {
         router.push('/ads');
         router.refresh();

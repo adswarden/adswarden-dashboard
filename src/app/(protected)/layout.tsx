@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
 import { getSessionWithRole } from '@/lib/dal';
+import { ensureRedirectsSchemaOnce } from '@/lib/db/run-migrate';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SiteHeader } from '@/components/site-header';
 import { KBarProviderWrapper } from '@/components/kbar-provider';
@@ -16,6 +17,8 @@ export default async function ProtectedLayout({
     redirect('/login?reason=unauthorized');
   }
 
+  await ensureRedirectsSchemaOnce();
+
   const { user, role } = sessionWithRole;
 
   return (
@@ -28,7 +31,15 @@ export default async function ProtectedLayout({
           } as React.CSSProperties
         }
       >
-        <AppSidebar variant="inset" user={{ name: user.name ?? 'User', email: user.email, avatar: user.image ?? undefined }} role={role} />
+        <AppSidebar
+          variant="inset"
+          user={{
+            name: user.name ?? "User",
+            email: user.email,
+            avatar: user.image ?? undefined,
+          }}
+          role={role}
+        />
         <SidebarInset>
           <SiteHeader />
           <div className="flex flex-1 flex-col min-h-0">

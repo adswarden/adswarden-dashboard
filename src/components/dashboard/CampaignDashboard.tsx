@@ -1,20 +1,40 @@
 'use client';
 
 import * as React from 'react';
+import dynamic from 'next/dynamic';
 import { CampaignHeader } from './CampaignHeader';
 import { KpiCard } from './KpiCard';
 import { LinkedContentCard } from './LinkedContentCard';
-import { ActivitySection } from './ActivitySection';
-import { TopDomainsChart } from './TopDomainsChart';
 import { CountryTable } from './CountryTable';
 import { CampaignLogsTable } from './CampaignLogsTable';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { Campaign } from '@/db/schema';
+
+const ActivitySection = dynamic(
+  () => import('./ActivitySection').then((m) => m.ActivitySection),
+  {
+    loading: () => <div className="h-8 w-full max-w-xs animate-pulse rounded-md bg-muted" />,
+  }
+);
+
+const TopDomainsChart = dynamic(
+  () => import('./TopDomainsChart').then((m) => m.TopDomainsChart),
+  {
+    loading: () => <div className="min-h-[220px] w-full animate-pulse rounded-md bg-muted" />,
+  }
+);
 
 type LinkedContent =
   | { type: 'ad'; id: string; name: string; description: string | null; imageUrl: string | null; targetUrl: string | null }
-  | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null };
+  | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null }
+  | {
+      type: 'redirect';
+      id: string;
+      name: string;
+      sourceDomain: string;
+      includeSubdomains: boolean;
+      destinationUrl: string;
+    };
 
 interface DashboardData {
   kpis: {
@@ -124,9 +144,9 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
             </div>
 
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-              <Card className="lg:col-span-2 py-4 gap-3 [&_[data-slot=card-header]]:px-4 [&_[data-slot=card-content]]:px-4">
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                  <CardTitle className="text-base">Activity</CardTitle>
+              <section className="lg:col-span-2 space-y-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <h2 className="text-sm font-medium text-muted-foreground">Activity</h2>
                   <ActivitySection
                     chartData={data.chartData}
                     range={range}
@@ -134,29 +154,31 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
                     loading={loading}
                     showRangeOnly
                   />
-                </CardHeader>
-                <CardContent className="p-0 pt-2">
-                  <ActivitySection
-                    chartData={data.chartData}
-                    range={range}
-                    onRangeChange={setRange}
-                    loading={loading}
-                    showChartOnly
-                  />
-                </CardContent>
-              </Card>
-              <Card className="py-4 gap-3 [&_[data-slot=card-header]]:px-4 [&_[data-slot=card-content]]:px-4">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base">Top Domains</CardTitle>
-                </CardHeader>
-                <CardContent className="pt-2">
-                  <TopDomainsChart data={data.topDomains} />
-                </CardContent>
-              </Card>
+                </div>
+                <div className="rounded-md border overflow-hidden bg-card/40">
+                  <div className="p-3 sm:p-4">
+                    <ActivitySection
+                      chartData={data.chartData}
+                      range={range}
+                      onRangeChange={setRange}
+                      loading={loading}
+                      showChartOnly
+                    />
+                  </div>
+                </div>
+              </section>
+              <section className="space-y-2">
+                <h2 className="text-sm font-medium text-muted-foreground">Top domains</h2>
+                <div className="rounded-md border overflow-hidden bg-card/40">
+                  <div className="flex min-h-[220px] items-stretch justify-center p-3 sm:p-4">
+                    <TopDomainsChart data={data.topDomains} />
+                  </div>
+                </div>
+              </section>
             </div>
 
             <section className="space-y-2">
-              <h2 className="text-sm font-medium">By Country</h2>
+              <h2 className="text-sm font-medium text-muted-foreground">By country</h2>
               <CountryTable data={data.countryDistribution} />
             </section>
           </TabsContent>

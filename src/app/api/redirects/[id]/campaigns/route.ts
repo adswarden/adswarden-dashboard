@@ -1,0 +1,38 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { database as db } from '@/db';
+import { campaigns } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { getSessionWithRole } from '@/lib/dal';
+
+export const dynamic = 'force-dynamic';
+
+type RouteContext = {
+  params: Promise<{ id: string }>;
+};
+
+export async function GET(_request: NextRequest, context: RouteContext) {
+  try {
+    const sessionWithRole = await getSessionWithRole();
+    if (!sessionWithRole) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { id: redirectId } = await context.params;
+
+    const linkedCampaigns = await db
+      .select({
+        id: campaigns.id,
+        name: campaigns.name,
+        campaignType: campaigns.campaignType,
+        status: campaigns.status,
+      })
+      .from(campaigns)
+      .where(eq(campaigns.redirectId, redirectId))
+      .orderBy(campaigns.name);
+
+    return NextResponse.json(linkedCampaigns);
+  } catch (error) {
+    console.error('Error fetching redirect campaigns:', error);
+    return NextResponse.json({ error: 'Failed to fetch campaigns' }, { status: 500 });
+  }
+}

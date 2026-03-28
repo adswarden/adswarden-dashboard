@@ -47,7 +47,6 @@ export function CampaignHeader({
               </Link>
             </Button>
             <DeleteButton
-              id={campaign.id}
               name={campaign.name}
               entityType="campaign"
               apiPath={`/api/campaigns/${campaign.id}`}
@@ -59,15 +58,13 @@ export function CampaignHeader({
 
       <div className="flex flex-wrap gap-3">
         {dateRange && (
-          <div className="rounded-lg border bg-card px-3 py-2">
+          <div className="rounded-md border bg-card/40 px-3 py-2">
             <p className="text-xs font-medium text-muted-foreground mb-0.5">Date</p>
             <p className="text-sm font-medium">{dateRange}</p>
           </div>
         )}
-        {(platformDomains.length > 0 || countryCodes.length >= 0) && (
-          <>
-            <div className="rounded-lg border bg-card px-3 py-2 min-w-0">
-              <p className="text-xs font-medium text-muted-foreground mb-1.5">Targets</p>
+        <div className="rounded-md border bg-card/40 px-3 py-2 min-w-0">
+              <p className="text-xs font-medium text-muted-foreground mb-0.5">Targets</p>
               <div className="flex flex-wrap gap-1.5">
                 {platformDomains.length > 0 ? (
                   <>
@@ -85,7 +82,7 @@ export function CampaignHeader({
                       </span>
                     )}
                   </>
-                ) : campaign.campaignType === 'notification' ? (
+                ) : campaign.campaignType === 'notification' || campaign.campaignType === 'redirect' ? (
                   <span className="inline-flex items-center rounded-md bg-muted px-2 py-0.5 text-xs font-medium">
                     All
                   </span>
@@ -94,8 +91,8 @@ export function CampaignHeader({
                 )}
               </div>
             </div>
-            <div className="rounded-lg border bg-card px-3 py-2 min-w-0">
-              <p className="text-xs font-medium text-muted-foreground mb-1.5">Countries</p>
+        <div className="rounded-md border bg-card/40 px-3 py-2 min-w-0">
+              <p className="text-xs font-medium text-muted-foreground mb-0.5">Countries</p>
               <div className="flex flex-wrap gap-1.5">
                 {countryCodes.length > 0 ? (
                   <>
@@ -120,8 +117,6 @@ export function CampaignHeader({
                 )}
               </div>
             </div>
-          </>
-        )}
       </div>
     </header>
   );

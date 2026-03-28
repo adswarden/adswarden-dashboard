@@ -15,14 +15,14 @@ interface CountryTableProps {
 export function CountryTable({ data }: CountryTableProps) {
   if (data.length === 0) {
     return (
-      <div className="flex h-[120px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+      <div className="flex h-[120px] items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
         No country data yet
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border overflow-hidden">
+    <div className="rounded-md border overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow>

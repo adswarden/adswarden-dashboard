@@ -1,6 +1,6 @@
 /**
  * ISO 3166-1 alpha-2 country codes and names for campaign targeting.
- * Matches visitors.country format (2-char codes).
+ * Matches extension user event country format (2-char codes).
  */
 export const COUNTRIES: { code: string; name: string }[] = [
   { code: 'US', name: 'United States' },

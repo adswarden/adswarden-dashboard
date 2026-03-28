@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { verifySession } from '@/lib/dal';
+import { getSessionWithRole } from '@/lib/dal';
 import { getConnectionCount } from '@/lib/redis';
 
 /**
@@ -8,9 +8,12 @@ import { getConnectionCount } from '@/lib/redis';
  * Admin-only (requires valid session).
  */
 export async function GET() {
-  const session = await verifySession();
+  const session = await getSessionWithRole();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (session.role !== 'admin') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const count = await getConnectionCount();

@@ -10,6 +10,7 @@ import {
   KBarSearch,
   KBarResults,
   useMatches,
+  useRegisterActions,
   type Action,
   type ActionImpl,
 } from "kbar"
@@ -22,13 +23,19 @@ import {
   IconUsers,
   IconTargetArrow,
   IconUserSearch,
+  IconUserCircle,
+  IconRoute,
+  IconCreditCard,
+  IconMoon,
+  IconSun,
 } from "@tabler/icons-react"
+import { useTheme } from "next-themes"
 import { cn } from "@/lib/utils"
 
 type Role = "user" | "admin"
 
 function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[] {
-  const baseActions: Action[] = [
+  const overview: Action[] = [
     {
       id: "dashboard",
       name: "Dashboard",
@@ -47,24 +54,44 @@ function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[
       icon: <IconTargetArrow className="size-4" />,
       perform: () => router.push("/campaigns"),
     },
+    ...(role === "admin"
+      ? ([
+        {
+          id: "users",
+          name: "Users",
+          shortcut: ["u", "u"],
+          keywords: "end user users extension",
+          section: "Overview",
+          icon: <IconUserSearch className="size-4" />,
+          perform: () => router.push("/users"),
+        },
+      ] satisfies Action[])
+      : []),
     {
-      id: "visitors",
-      name: "Visitors",
-      shortcut: ["v", "v"],
-      keywords: "visitor users",
-      section: "Overview",
-      icon: <IconUserSearch className="size-4" />,
-      perform: () => router.push("/visitors"),
-    },
-    {
-      id: "analytics",
-      name: "Extension Insights",
-      shortcut: ["a", "a"],
-      keywords: "analytics charts insights",
+      id: "events",
+      name: "Events",
+      shortcut: ["e", "e"],
+      keywords: "events logs extension activity charts requests",
       section: "Overview",
       icon: <IconChartBar className="size-4" />,
-      perform: () => router.push("/analytics"),
+      perform: () => router.push("/events"),
     },
+    {
+      id: "account",
+      name: "Account",
+      shortcut: ["a", "c"],
+      keywords: "settings profile password sessions security",
+      section: "Overview",
+      icon: <IconUserCircle className="size-4" />,
+      perform: () => router.push("/account"),
+    },
+  ]
+
+  if (role !== "admin") {
+    return overview
+  }
+
+  const content: Action[] = [
     {
       id: "platforms",
       name: "Platforms",
@@ -77,7 +104,7 @@ function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[
     {
       id: "ads",
       name: "Ads",
-      shortcut: ["a", "d"],
+      shortcut: ["a", "a"],
       keywords: "ads advertisements",
       section: "Content",
       icon: <IconAd2 className="size-4" />,
@@ -92,21 +119,98 @@ function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[
       icon: <IconBell className="size-4" />,
       perform: () => router.push("/notifications"),
     },
+    {
+      id: "redirects",
+      name: "Redirects",
+      shortcut: ["r", "r"],
+      keywords: "redirects domains routing",
+      section: "Content",
+      icon: <IconRoute className="size-4" />,
+      perform: () => router.push("/redirects"),
+    },
   ]
 
-  if (role === "admin") {
-    baseActions.push({
-      id: "users",
-      name: "Users",
-      shortcut: ["u", "u"],
-      keywords: "users admin",
-      section: "Admin",
+  const team: Action[] = [
+    {
+      id: "members",
+      name: "Members",
+      shortcut: ["m", "m"],
+      keywords: "members users roles team",
+      section: "Team",
       icon: <IconUsers className="size-4" />,
-      perform: () => router.push("/users"),
-    })
-  }
+      perform: () => router.push("/members"),
+    },
+    {
+      id: "payments",
+      name: "Payments",
+      shortcut: ["p", "y"],
+      keywords: "payments revenue subscriptions billing",
+      section: "Team",
+      icon: <IconCreditCard className="size-4" />,
+      perform: () => router.push("/payments"),
+    },
+  ]
 
-  return baseActions
+  return [...overview, ...content, ...team]
+}
+
+const KBAR_THEME_PARENT = "kbar-theme"
+
+function KBarThemeRegister() {
+  const { setTheme, resolvedTheme } = useTheme()
+
+  const themeActions = React.useMemo<Action[]>(
+    () => [
+      {
+        id: KBAR_THEME_PARENT,
+        name: "Choose theme…",
+        keywords: "theme appearance color interface mode dark light system",
+        section: "Appearance",
+        icon: <IconSun className="size-4" />,
+      },
+      {
+        id: "kbar-theme-light",
+        name: "Use light theme",
+        keywords: "light appearance",
+        section: "",
+        parent: KBAR_THEME_PARENT,
+        icon: <IconSun className="size-4" />,
+        perform: () => setTheme("light"),
+      },
+      {
+        id: "kbar-theme-dark",
+        name: "Use dark theme",
+        keywords: "dark appearance night",
+        section: "",
+        parent: KBAR_THEME_PARENT,
+        icon: <IconMoon className="size-4" />,
+        perform: () => setTheme("dark"),
+      },
+      {
+        id: "kbar-theme-system",
+        name: "Use system theme",
+        keywords: "system default os appearance",
+        section: "",
+        parent: KBAR_THEME_PARENT,
+        icon: <IconSun className="size-4" />,
+        perform: () => setTheme("system"),
+      },
+      {
+        id: "kbar-theme-toggle",
+        name: "Toggle light/dark",
+        keywords: "theme appearance dark light toggle switch",
+        section: "Appearance",
+        shortcut: ["t", "t"],
+        icon: <IconMoon className="size-4" />,
+        perform: () =>
+          setTheme(resolvedTheme === "dark" ? "light" : "dark"),
+      },
+    ],
+    [setTheme, resolvedTheme]
+  )
+
+  useRegisterActions(themeActions, [themeActions])
+  return null
 }
 
 function RenderResults() {
@@ -178,6 +282,7 @@ export function KBarProviderWrapper({
 
   return (
     <KBarProvider actions={actions}>
+      <KBarThemeRegister />
       {children}
       <KBarPortal>
         <KBarPositioner className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm">

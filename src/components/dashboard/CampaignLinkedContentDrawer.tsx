@@ -9,11 +9,19 @@ import {
   SheetDescription,
 } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
-import { IconPencil, IconAd2, IconBell } from '@tabler/icons-react';
+import { IconPencil, IconAd2, IconBell, IconRoute } from '@tabler/icons-react';
 
 type LinkedContent =
   | { type: 'ad'; id: string; name: string; description: string | null; imageUrl: string | null; targetUrl: string | null }
-  | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null };
+  | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null }
+  | {
+      type: 'redirect';
+      id: string;
+      name: string;
+      sourceDomain: string;
+      includeSubdomains: boolean;
+      destinationUrl: string;
+    };
 
 interface CampaignLinkedContentDrawerProps {
   open: boolean;
@@ -40,17 +48,25 @@ export function CampaignLinkedContentDrawer({
           <SheetTitle className="flex items-center gap-2 pr-8">
             {linkedContent.type === 'ad' ? (
               <IconAd2 className="h-5 w-5" />
+            ) : linkedContent.type === 'redirect' ? (
+              <IconRoute className="h-5 w-5" />
             ) : (
               <IconBell className="h-5 w-5" />
             )}
-            {linkedContent.type === 'ad' ? linkedContent.name : linkedContent.title}
+            {linkedContent.type === 'ad'
+              ? linkedContent.name
+              : linkedContent.type === 'redirect'
+                ? linkedContent.name
+                : linkedContent.title}
           </SheetTitle>
           <SheetDescription>
             {linkedContent.type === 'ad'
               ? campaignType === 'popup'
                 ? 'Linked pop up content (same ad, displayed as popup)'
                 : 'Linked ad content'
-              : 'Linked notification content'}
+              : linkedContent.type === 'redirect'
+                ? 'Linked redirect rule'
+                : 'Linked notification content'}
           </SheetDescription>
         </SheetHeader>
 
@@ -121,6 +137,37 @@ export function CampaignLinkedContentDrawer({
                   <Link href={`/notifications/${linkedContent.id}/edit`}>
                     <IconPencil className="mr-2 h-4 w-4" />
                     Edit Notification
+                  </Link>
+                </Button>
+              )}
+            </>
+          )}
+
+          {linkedContent.type === 'redirect' && (
+            <>
+              <div className="pt-2">
+                <p className="text-sm font-medium text-muted-foreground mb-2">Source domain</p>
+                <p className="text-sm font-mono">
+                  {linkedContent.includeSubdomains ? '*.' : ''}
+                  {linkedContent.sourceDomain}
+                </p>
+              </div>
+              <div className="pt-2">
+                <p className="text-sm font-medium text-muted-foreground mb-2">Destination URL</p>
+                <a
+                  href={linkedContent.destinationUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-primary hover:underline break-all"
+                >
+                  {linkedContent.destinationUrl}
+                </a>
+              </div>
+              {isAdmin && (
+                <Button variant="outline" size="sm" className="mt-4 px-4 py-2" asChild>
+                  <Link href={`/redirects/${linkedContent.id}/edit`}>
+                    <IconPencil className="mr-2 h-4 w-4" />
+                    Edit Redirect
                   </Link>
                 </Button>
               )}

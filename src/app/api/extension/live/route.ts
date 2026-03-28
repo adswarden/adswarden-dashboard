@@ -6,6 +6,9 @@ import {
   REALTIME_COUNT_KEY,
 } from '@/lib/redis';
 import { checkLiveRateLimit } from '@/lib/rate-limit';
+import { buildExtensionLiveInit, buildCampaignUpdateForExtension } from '@/lib/extension-live-init';
+import { resolveEndUserFromRequest } from '@/lib/enduser-auth';
+import type { EndUserRow } from '@/db/schema';
 
 export const maxDuration = 300;
 
@@ -15,16 +18,31 @@ function sseEvent(name: string, data: string): Uint8Array {
   return encoder.encode(`event: ${name}\ndata: ${data}\n\n`);
 }
 
+function endUserEligibleForExtensionPayload(user: EndUserRow): boolean {
+  if (user.status !== 'active') return false;
+  const now = new Date();
+  if (user.plan === 'trial' && user.endDate && now > new Date(user.endDate)) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * GET /api/extension/live
- * SSE stream for real-time notifications, domains, and connection count.
- * Optional query: visitorId (for future use).
- * Events: connection_count, notification, domains.
- * Connection may close after platform timeout (~5 min); extension should reconnect.
+ * SSE: connection_count, init (domains + campaigns when authenticated), notification, domains, update.
+ * Optional Bearer token — without a valid eligible user, init includes domains only.
  */
 export async function GET(request: NextRequest) {
   const rateLimitRes = await checkLiveRateLimit(request);
   if (rateLimitRes) return rateLimitRes;
+
+  const resolved = await resolveEndUserFromRequest(request);
+  const endUserForInit =
+    resolved?.endUser && endUserEligibleForExtensionPayload(resolved.endUser)
+      ? resolved.endUser
+      : null;
+
+  const initPayload = await buildExtensionLiveInit(endUserForInit);
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -70,24 +88,36 @@ export async function GET(request: NextRequest) {
         controller.enqueue(sseEvent('connection_count', String(count)));
         await publishConnectionCount(count);
 
+        controller.enqueue(sseEvent('init', JSON.stringify(initPayload)));
+
         await subscriber.subscribe(REALTIME_CHANNEL, (message: string) => {
-          try {
-            let eventName = 'notification';
+          void (async () => {
             try {
-              const parsed = JSON.parse(message) as { type?: string };
-              if (parsed?.type === 'platforms_updated') {
-                eventName = 'domains';
+              let parsed: { type?: string; campaignId?: string } = {};
+              try {
+                parsed = JSON.parse(message) as { type?: string; campaignId?: string };
+              } catch {
+                // legacy non-JSON payloads: fall through to notification
               }
+
+              if (parsed?.type === 'platforms_updated') {
+                controller.enqueue(sseEvent('domains', message));
+                return;
+              }
+
+              if (parsed?.type === 'campaign_updated' && typeof parsed.campaignId === 'string') {
+                const updatePayload = await buildCampaignUpdateForExtension(parsed.campaignId);
+                controller.enqueue(sseEvent('update', JSON.stringify(updatePayload)));
+                return;
+              }
+
+              controller.enqueue(sseEvent('notification', message));
             } catch {
-              // not JSON or parse error, keep as notification
+              // stream may be closed
             }
-            controller.enqueue(sseEvent(eventName, message));
-          } catch {
-            // stream may be closed
-          }
+          })();
         });
 
-        // Keep stream open until request is aborted (client disconnect or platform timeout)
         await new Promise<void>((resolve) => {
           request.signal?.addEventListener('abort', () => resolve());
         });

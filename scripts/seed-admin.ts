@@ -7,13 +7,8 @@ import { config } from 'dotenv';
 config({ path: '.env.local' });
 
 export async function seedAdmin(): Promise<void> {
-  const email = process.env.ADMIN_EMAIL;
-  const password = process.env.ADMIN_PASSWORD;
-
-  if (!email || !password) {
-    console.log('Skipping admin seed: ADMIN_EMAIL and ADMIN_PASSWORD must be set in .env.local');
-    return;
-  }
+  const email = process.env.ADMIN_EMAIL || 'admin@admin.com';
+  const password = process.env.ADMIN_PASSWORD || 'passwordis80';
 
   // Dynamic import to avoid loading server-only during script init
   const authModule = await import('../src/lib/auth');

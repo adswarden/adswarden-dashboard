@@ -4,144 +4,146 @@ This script simulates browser extension requests by fetching ad block data (ads 
 
 ## Quick Start
 
+Create an extension user at **`/register`** (or via API), then:
+
 ```bash
-./test-extension-log.sh
+cd /path/to/admin_dashboard
+EXTENSION_EMAIL='you@example.com' EXTENSION_PASSWORD='yourpassword' ./docs/test-extension-log.sh
 ```
 
 ## What It Does
 
-1. **Fetches real platforms** from your database via `/api/platforms`
-2. **Calls the ad-block endpoint** `/api/extension/ad-block` which:
-   - Returns ads and notifications for the platform
-   - Automatically logs visits (no separate log call needed)
-3. **Uses actual domain names** from your configured platforms
+1. **Logs in** with `POST /api/extension/auth/login` (extension user — not admin)
+2. **Gets a target domain** from public `GET /api/extension/domains` (first domain, or fallback `example.com`)
+3. **Calls** `POST /api/extension/ad-block` with **`Authorization: Bearer`** and JSON `{ domain, requestType? }`
+
+Telemetry is written to **`enduser_events`** for that user.
 
 ## Features
 
-- ✅ Automatically uses real platforms and domains from your database
-- ✅ Shows which ads are active for each platform
-- ✅ Creates realistic test logs that appear in your Analytics dashboard
-- ✅ Generates unique visitor IDs (timestamp-based)
-- ✅ Supports custom visitor IDs via environment variable
+- Uses real **Bearer** session flow (matches production extension behavior)
+- No admin cookie required (avoids protected `/api/platforms`)
 
 ## Usage Examples
 
-### Basic Usage
+### Required: extension user credentials
+
 ```bash
-./test-extension-log.sh
+EXTENSION_EMAIL='you@example.com' EXTENSION_PASSWORD='secret' ./docs/test-extension-log.sh
 ```
 
-### Custom Visitor ID
-```bash
-VISITOR_ID=my-custom-user-123 ./test-extension-log.sh
-```
+### Different server URL
 
-### Different Server URL
 ```bash
-BASE_URL=http://localhost:4000 ./test-extension-log.sh
+BASE_URL=http://localhost:4000 EXTENSION_EMAIL='you@example.com' EXTENSION_PASSWORD='secret' ./docs/test-extension-log.sh
 ```
 
 ## Output
 
 The script will:
-- Display found platforms and their domains
-- Show active ads for each platform
-- Create log entries and display success/failure
-- Provide links to view logs in the Analytics dashboard
+
+- Log in and acquire a session token
+- Print the domain used (from `GET /api/extension/domains` or `example.com`)
+- Call ad-block three times (combined, ads-only, notifications-only) and print HTTP status plus ad/notification counts
+- Print a sample `curl` snippet you can paste (with your email; password shown as `…`)
 
 ## Example Output
 
 ```
 ==========================================
-Extension Log Test Script
+Extension Ad Block Test Script
 ==========================================
 Base URL: http://localhost:3000
 
-Fetching platforms from database...
-Found platform: insta
-Using domain: instagram.com (extracted from: https://www.instagram.com/)
+Logging in as extension user...
+Login OK (token acquired).
 
-Fetching ads from database...
-Found 1 active ad(s) for this platform:
-  - testing (Status: active)
+Fetching target domains (public API)...
+Using domain from API: instagram.com
 
 ==========================================
-Generating test logs...
+Testing ad-block endpoint (Bearer auth)...
 ==========================================
 
-Logging ad request...
+Testing: Get both ads and notifications (default)
   Domain: instagram.com
-  Visitor ID: test-visitor-1769459034
-  ✓ Success! Log created for ad
+  ✓ Success
+  Found: 1 ad(s), 0 notification(s)
 
-Logging notification request...
+Testing: Get ads only
   Domain: instagram.com
-  Visitor ID: test-visitor-1769459034
-  ✓ Success! Log created for notification
+  ✓ Success
+  Found: 1 ad(s), 0 notification(s)
+
+Testing: Get notifications only
+  Domain: instagram.com
+  ✓ Success
+  Found: 0 ad(s), 0 notification(s)
 
 ==========================================
 Done!
 ==========================================
-
-Check your Analytics dashboard at:
-  http://localhost:3000/analytics
 ```
 
 ## Manual Curl Commands
 
-If you prefer to use curl directly, here are the commands using your actual data:
+If you prefer to use curl directly:
 
-### Get Platforms
+### Public domains list (no admin session)
+
 ```bash
-curl http://localhost:3000/api/platforms
+curl -s http://localhost:3000/api/extension/domains
 ```
 
-### Get Ads for a Domain
+### Get Ads for a Domain (admin dashboard API; requires admin cookie/session)
+
 ```bash
-# Use the exact domain format from your database
 curl "http://localhost:3000/api/ads?domain=https://www.instagram.com/"
 ```
 
-### Get Ad Block Data (Both Ads and Notifications)
+### Login (get token)
+
 ```bash
+curl -s -X POST http://localhost:3000/api/extension/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"yourpassword"}'
+```
+
+### Get Ad Block Data (Both Ads and Notifications)
+
+```bash
+TOKEN='<paste token from login response>'
+
 curl -X POST http://localhost:3000/api/extension/ad-block \
   -H "Content-Type: application/json" \
-  -d '{
-    "visitorId": "test-visitor-123",
-    "domain": "instagram.com"
-  }'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"domain":"instagram.com"}'
 ```
 
 ### Get Ads Only
+
 ```bash
 curl -X POST http://localhost:3000/api/extension/ad-block \
   -H "Content-Type: application/json" \
-  -d '{
-    "visitorId": "test-visitor-123",
-    "domain": "instagram.com",
-    "requestType": "ad"
-  }'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"domain":"instagram.com","requestType":"ad"}'
 ```
 
 ### Get Notifications Only
+
 ```bash
 curl -X POST http://localhost:3000/api/extension/ad-block \
   -H "Content-Type: application/json" \
-  -d '{
-    "visitorId": "test-visitor-123",
-    "domain": "instagram.com",
-    "requestType": "notification"
-  }'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"requestType":"notification"}'
 ```
 
-**Note:** Visit logging happens automatically with each ad-block call. No separate log endpoint needed!
+**Note:** Do not send `endUserId` in the body; the user is identified by the Bearer token.
 
 ## Requirements
 
-- `curl` - for API requests
-- `jq` (optional) - for better JSON formatting. Install with:
-  - Ubuntu/Debian: `sudo apt-get install jq`
-  - macOS: `brew install jq`
+- `curl` — API requests
+- `jq` — **required** by `test-extension-log.sh` (login + domain parsing)
 
 ## Viewing Results
 
@@ -157,7 +159,6 @@ After running the script, check your dashboard:
 
 ## Notes
 
-- The script uses the clean domain format (e.g., `instagram.com`) for logging, which is what a real extension would send
-- When checking for ads, it uses the stored domain format from your database
-- Each run generates a new visitor ID unless you specify one
-- Logs appear immediately in the Analytics dashboard
+- The script uses the same hostname shape as `/api/extension/domains` (or a fallback), which matches what a real extension sends on ad-block
+- The authenticated user is always the **`end_users`** row tied to your extension login; telemetry rows use that client’s id in **`enduser_events`**
+- Logs appear in Analytics shortly after each successful ad-block call

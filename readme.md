@@ -8,7 +8,7 @@ This admin dashboard provides a complete solution for managing:
 - **Platforms**: Configure domains where ads and notifications will be displayed
 - **Ads**: Create, manage, and schedule advertisements with images and target URLs
 - **Notifications**: Create time-bound notifications for specific platforms
-- **Analytics**: Track extension user activity and request logs
+- **Events**: Track extension activity (`enduser_events`: one row per serve; **Events** dashboard at `/events`; legacy path `/analytics` redirects there). The **Users** page aggregates extension customers by `enduser_id`.
 - **Extension API**: RESTful API endpoints for browser extensions to fetch ads and notifications
 
 ## Tech Stack
@@ -109,6 +109,10 @@ pnpm dev
 ```
 
 The application will be available at `http://localhost:3000`.
+
+## Production deployment (Vercel)
+
+Deploy by connecting this repo to [Vercel](https://vercel.com) and setting environment variables in the project settings. See **[docs/DEPLOY.md](./docs/DEPLOY.md)** for the full checklist (`DATABASE_URL`, `BETTER_AUTH_BASE_URL`, `BETTER_AUTH_SECRET`, optional `REDIS_URL`, etc.). Docker and manual standalone builds are documented there as alternatives.
 
 ## Authentication
 
@@ -294,7 +298,7 @@ The database connection uses a singleton pattern compatible with Next.js dev mod
 ## API Endpoints
 
 ### Admin API (Protected)
-- `GET /api/campaigns` - List campaigns
+- `GET /api/campaigns` - List campaigns (`?page=&pageSize=`). Response: `{ data, page, pageSize, totalCount, totalPages }`. Non-admins only see campaigns they created.
 - `POST /api/campaigns` - Create campaign (admin only)
 - `GET /api/campaigns/[id]` - Get campaign
 - `PUT /api/campaigns/[id]` - Update campaign (admin only)
@@ -305,20 +309,26 @@ The database connection uses a singleton pattern compatible with Next.js dev mod
 - `PUT /api/platforms/[id]` - Update platform
 - `DELETE /api/platforms/[id]` - Delete platform
 
-- `GET /api/ads` - List all ads (or filter by domain)
+- `GET /api/ads` - List all ads (or filter by domain). Each row includes `linkedCampaignCount` (campaigns referencing `ad_id`).
 - `POST /api/ads` - Create ad
 - `GET /api/ads/[id]` - Get ad
 - `PUT /api/ads/[id]` - Update ad
 - `DELETE /api/ads/[id]` - Delete ad
 
-- `GET /api/notifications` - List all notifications (or filter by domain)
+- `GET /api/notifications` - List notifications (`?page=&pageSize=`). Response: `{ data, page, pageSize, totalCount, totalPages }`. Each item in `data` includes `linkedCampaignCount`.
 - `POST /api/notifications` - Create notification
 - `GET /api/notifications/[id]` - Get notification
 - `PUT /api/notifications/[id]` - Update notification
 - `DELETE /api/notifications/[id]` - Delete notification
 
+- `GET /api/redirects` - List redirects. Each row includes `linkedCampaignCount`.
+- `POST /api/redirects` - Create redirect
+- `GET /api/redirects/[id]` - Get redirect
+- `PUT /api/redirects/[id]` - Update redirect
+- `DELETE /api/redirects/[id]` - Delete redirect
+
 ### Extension API (Public)
-- `POST /api/extension/ad-block` - Get ads and/or notifications for domain and automatically log visit(s). Body: `{visitorId, domain, requestType?}`. Returns `{ads: [...], notifications: [...]}`.
+- `POST /api/extension/ad-block` - Get ads and/or notifications for domain and automatically log visit(s). Body: `{endUserId, domain, requestType?}`. Returns `{ads: [...], notifications: [...]}`.
 
 ### Authentication API (Better Auth)
 - `GET/POST /api/auth/*` - Better Auth catch-all (sign-in, sign-up, sign-out, session, etc.)
@@ -341,7 +351,7 @@ Key documents:
 - Ensure all environment variables are set in production (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_BASE_URL`)
 - Use strong `BETTER_AUTH_SECRET` (minimum 32 characters)
 - **Migrations run automatically** on app startup (via `instrumentation.ts`) — no manual `pnpm db:migrate` needed
-- The single migration `0000_final_schema` is idempotent and safe to run on fresh or existing databases
+- The single migration `0000_initial.sql` is idempotent and safe to run on fresh or existing databases
 - Database connection handles graceful shutdown
 - Use production-ready connection pooling settings
 - Enable HTTPS for secure cookie transmission

@@ -1,8 +1,47 @@
-# Deploying the Admin Dashboard (Standalone Build)
+# Deploying the Admin Dashboard
 
-The app uses Next.js `output: "standalone"` — a minimal, self-contained build that runs with `node server.js`.
+Production hosting is expected on **Vercel**. Docker and manual standalone builds remain optional for self-hosting.
 
-## Option 1: Docker (recommended)
+The app uses Next.js `output: "standalone"` for Docker / `node server.js` deployments. Vercel runs the standard Next.js build (`next build`); you do not need to ship the standalone folder yourself.
+
+---
+
+## Option 1: Vercel (recommended)
+
+### 1. Connect the repo
+
+1. Import the Git repository in the [Vercel dashboard](https://vercel.com/new).
+2. Framework preset: **Next.js**. Build command: `pnpm build` (or `npm run build`). Install command: `pnpm install` (or `npm install`).
+
+### 2. Environment variables
+
+In **Project → Settings → Environment Variables**, add (Production / Preview as needed):
+
+| Variable | Required | Notes |
+|----------|----------|--------|
+| `DATABASE_URL` | Yes | Postgres URL (e.g. Supabase, Neon, RDS). Use a **pooler** URL if your provider recommends it for serverless. |
+| `BETTER_AUTH_SECRET` | Yes | Min 32 characters. |
+| `BETTER_AUTH_BASE_URL` | Yes (prod) | Your live URL, e.g. `https://your-app.vercel.app` or custom domain — **no trailing slash**. |
+| `REDIS_URL` | No | e.g. Upstash `rediss://...` for realtime. **Recommended in production:** without Redis, per-IP rate limits for extension **ad-block**, **sync**, and **live** are skipped (traffic is still allowed). |
+| `DOMAIN` | No | If you use it in `next.config` / CORS; set to your production host if applicable. |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | No | Only for seeding the first admin (`pnpm db:seed-admin` run locally against prod DB, or a one-off job). |
+
+Match `BETTER_AUTH_BASE_URL` to the exact URL users use (custom domain vs `*.vercel.app`).
+
+### 3. Deploy
+
+Push to your connected branch; Vercel builds and deploys. Migrations run on cold start via `instrumentation.ts` when the serverless runtime boots — ensure `DATABASE_URL` is reachable from Vercel’s regions.
+
+### 4. Optional checks
+
+- [ ] `src/middleware.ts` adds baseline security headers (frame deny, nosniff, HSTS in production)
+- [ ] `BETTER_AUTH_BASE_URL` matches the production domain (no trailing slash)
+- [ ] Postgres allows connections from Vercel (IP allowlists / pooler docs from your DB provider)
+- [ ] Redis (if used) allows TLS and serverless-friendly connection limits
+
+---
+
+## Option 2: Docker
 
 ### 1. Create `.env.local` on the server
 
@@ -36,7 +75,7 @@ The app will be available on port 3000. Migrations run automatically on startup.
 
 ---
 
-## Option 2: Manual build → copy to server
+## Option 3: Manual build → copy to server
 
 ### 1. Build locally
 
@@ -59,7 +98,7 @@ cp -r drizzle deploy/
 
 ### 3. Create `.env.local` on the server
 
-Same contents as Option 1, but use your server’s Postgres/Redis hostnames:
+Same contents as the Docker section above, but use your server’s Postgres/Redis hostnames:
 
 ```bash
 # If Postgres/Redis are on the same host:

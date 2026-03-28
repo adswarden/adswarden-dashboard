@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { verifySession } from '@/lib/dal';
+import { getSessionWithRole } from '@/lib/dal';
 import {
   createRedisClient,
   getConnectionCount,
@@ -25,10 +25,16 @@ function sseEvent(name: string, data: string): Uint8Array {
  * extension user count.
  */
 export async function GET(request: NextRequest) {
-  const session = await verifySession();
+  const session = await getSessionWithRole();
   if (!session) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (session.role !== 'admin') {
+    return new Response(JSON.stringify({ error: 'Forbidden' }), {
+      status: 403,
       headers: { 'Content-Type': 'application/json' },
     });
   }

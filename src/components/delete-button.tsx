@@ -18,9 +18,8 @@ import { IconTrash, IconLoader2 } from '@tabler/icons-react';
 import { toast } from 'sonner';
 
 interface DeleteButtonProps {
-  id: string;
   name: string;
-  entityType: 'ad' | 'platform' | 'notification' | 'campaign';
+  entityType: 'ad' | 'platform' | 'notification' | 'redirect' | 'campaign';
   apiPath: string;
   /** When provided, redirects here after successful delete (e.g. when deleting from a detail page) */
   redirectTo?: string;
@@ -41,6 +40,11 @@ const entityLabels = {
     title: 'Delete Notification',
     successMessage: 'Notification deleted successfully',
     errorMessage: 'Failed to delete notification',
+  },
+  redirect: {
+    title: 'Delete Redirect',
+    successMessage: 'Redirect deleted successfully',
+    errorMessage: 'Failed to delete redirect',
   },
   campaign: {
     title: 'Delete Campaign',

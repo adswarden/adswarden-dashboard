@@ -59,3 +59,18 @@ export function domainsMatch(domain1: string, domain2: string): boolean {
   const root2 = extractRootDomain(host2);
   return root1 === root2 && root1.length > 0;
 }
+
+/**
+ * Whether a visited host matches a redirect rule's source domain.
+ */
+export function redirectSourceMatchesVisit(
+  visitDomain: string,
+  sourceDomain: string,
+  includeSubdomains: boolean
+): boolean {
+  const host = normalizeDomainForMatch(visitDomain);
+  const source = normalizeDomainForMatch(sourceDomain);
+  if (host === source) return true;
+  if (!includeSubdomains) return false;
+  return host.endsWith(`.${source}`);
+}

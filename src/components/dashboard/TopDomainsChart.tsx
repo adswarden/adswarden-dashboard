@@ -25,7 +25,7 @@ interface TopDomainsChartProps {
 export function TopDomainsChart({ data }: TopDomainsChartProps) {
   if (data.length === 0) {
     return (
-      <div className="flex h-[200px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+      <div className="flex h-[200px] items-center justify-center rounded-md border border-dashed text-sm text-muted-foreground">
         No data yet
       </div>
     );

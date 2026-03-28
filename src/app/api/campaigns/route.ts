@@ -1,28 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import {
-  campaigns,
-  campaignPlatforms,
-  campaignCountries,
-  campaignAd,
-  campaignNotification,
-  notifications,
-} from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { campaigns, notifications } from '@/db/schema';
+import { desc, eq, sql } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
-import { publishRealtimeNotification } from '@/lib/redis';
+import { publishCampaignUpdated, publishRealtimeNotification } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
 
-// GET list campaigns (user: own/read-only, admin: all)
-export async function GET() {
+// GET list campaigns (non-admin: own only; admin: all). Paginated: ?page=1&pageSize=50
+export async function GET(request: NextRequest) {
   try {
     const sessionWithRole = await getSessionWithRole();
     if (!sessionWithRole) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const list = await db
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
+    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '50', 10)));
+    const offset = (page - 1) * pageSize;
+
+    const scope =
+      sessionWithRole.role === 'admin'
+        ? undefined
+        : eq(campaigns.createdBy, sessionWithRole.user.id);
+
+    const listQuery = db
       .select({
         id: campaigns.id,
         name: campaigns.name,
@@ -33,32 +36,40 @@ export async function GET() {
         timeStart: campaigns.timeStart,
         timeEnd: campaigns.timeEnd,
         createdBy: campaigns.createdBy,
+        adId: campaigns.adId,
+        notificationId: campaigns.notificationId,
+        redirectId: campaigns.redirectId,
+        platformIds: campaigns.platformIds,
+        countryCodes: campaigns.countryCodes,
         createdAt: campaigns.createdAt,
         updatedAt: campaigns.updatedAt,
       })
       .from(campaigns)
-      .orderBy(campaigns.createdAt);
+      .orderBy(desc(campaigns.createdAt))
+      .limit(pageSize)
+      .offset(offset);
 
-    // Enrich with platform ids, ad ids, notification id
-    const result = await Promise.all(
-      list.map(async (c) => {
-        const [platformRows, countryRows, adRow, notifRow] = await Promise.all([
-          db.select({ platformId: campaignPlatforms.platformId }).from(campaignPlatforms).where(eq(campaignPlatforms.campaignId, c.id)),
-          db.select({ countryCode: campaignCountries.countryCode }).from(campaignCountries).where(eq(campaignCountries.campaignId, c.id)),
-          db.select({ adId: campaignAd.adId }).from(campaignAd).where(eq(campaignAd.campaignId, c.id)).limit(1),
-          db.select({ notificationId: campaignNotification.notificationId }).from(campaignNotification).where(eq(campaignNotification.campaignId, c.id)).limit(1),
-        ]);
-        return {
-          ...c,
-          platformIds: platformRows.map((r) => r.platformId),
-          countryCodes: countryRows.map((r) => r.countryCode),
-          adId: adRow[0]?.adId ?? null,
-          notificationId: notifRow[0]?.notificationId ?? null,
-        };
-      })
-    );
+    const countQuery = db.select({ count: sql<number>`count(*)` }).from(campaigns);
 
-    return NextResponse.json(result);
+    const [list, countRow] = await Promise.all([
+      scope ? listQuery.where(scope) : listQuery,
+      scope ? countQuery.where(scope) : countQuery,
+    ]);
+
+    const totalCount = Number(countRow[0]?.count ?? 0);
+    const result = list.map((c) => ({
+      ...c,
+      platformIds: [...(c.platformIds ?? [])],
+      countryCodes: [...(c.countryCodes ?? [])],
+    }));
+
+    return NextResponse.json({
+      data: result,
+      page,
+      pageSize,
+      totalCount,
+      totalPages: Math.ceil(totalCount / pageSize),
+    });
   } catch (error) {
     console.error('Error fetching campaigns:', error);
     return NextResponse.json({ error: 'Failed to fetch campaigns' }, { status: 500 });
@@ -92,6 +103,7 @@ export async function POST(request: NextRequest) {
       countryCodes,
       adId,
       notificationId,
+      redirectId,
     } = body;
 
     if (!name || !campaignType || !frequencyType) {
@@ -101,7 +113,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (campaignType !== 'notification' && (!Array.isArray(platformIds) || platformIds.length === 0)) {
+    if (
+      campaignType !== 'notification' &&
+      campaignType !== 'redirect' &&
+      (!Array.isArray(platformIds) || platformIds.length === 0)
+    ) {
       return NextResponse.json(
         { error: 'Select at least one domain (platform)' },
         { status: 400 }
@@ -120,6 +136,26 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (campaignType === 'redirect' && !redirectId) {
+      return NextResponse.json(
+        { error: 'Select a redirect' },
+        { status: 400 }
+      );
+    }
+
+    const contentLinks =
+      campaignType === 'ads' || campaignType === 'popup'
+        ? { adId, notificationId: null as string | null, redirectId: null as string | null }
+        : campaignType === 'notification'
+          ? { adId: null as string | null, notificationId, redirectId: null as string | null }
+          : { adId: null as string | null, notificationId: null as string | null, redirectId };
+
+    const platformIdArray =
+      Array.isArray(platformIds) && platformIds.length > 0 ? platformIds : ([] as string[]);
+    const countryCodeArray =
+      Array.isArray(countryCodes) && countryCodes.length > 0
+        ? countryCodes.map((code: string) => code.toUpperCase().slice(0, 2))
+        : ([] as string[]);
 
     const [inserted] = await db
       .insert(campaigns)
@@ -134,6 +170,11 @@ export async function POST(request: NextRequest) {
         status: status ?? 'inactive',
         startDate: startDate ? new Date(startDate) : null,
         endDate: endDate ? new Date(endDate) : null,
+        adId: contentLinks.adId,
+        notificationId: contentLinks.notificationId,
+        redirectId: contentLinks.redirectId,
+        platformIds: platformIdArray,
+        countryCodes: countryCodeArray,
         createdBy: sessionWithRole.user.id,
       })
       .returning({ id: campaigns.id });
@@ -143,22 +184,7 @@ export async function POST(request: NextRequest) {
     }
 
     const campaignId = inserted.id;
-
-    if (Array.isArray(platformIds) && platformIds.length > 0) {
-      await db.insert(campaignPlatforms).values(
-        platformIds.map((platformId: string) => ({ campaignId, platformId }))
-      );
-    }
-    if (Array.isArray(countryCodes) && countryCodes.length > 0) {
-      await db.insert(campaignCountries).values(
-        countryCodes.map((code: string) => ({ campaignId, countryCode: code.toUpperCase().slice(0, 2) }))
-      );
-    }
-    if ((campaignType === 'ads' || campaignType === 'popup') && adId) {
-      await db.insert(campaignAd).values({ campaignId, adId });
-    }
     if (campaignType === 'notification' && notificationId) {
-      await db.insert(campaignNotification).values({ campaignId, notificationId });
       const [notif] = await db.select().from(notifications).where(eq(notifications.id, notificationId)).limit(1);
       if (notif) {
         await publishRealtimeNotification(
@@ -171,6 +197,8 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+
+    await publishCampaignUpdated(campaignId);
 
     return NextResponse.json({ id: campaignId });
   } catch (error) {

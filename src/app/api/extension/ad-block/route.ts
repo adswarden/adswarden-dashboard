@@ -2,17 +2,23 @@ import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
 import {
   ads,
-  platforms,
-  notifications,
-  visitors,
   campaigns,
-  campaignPlatforms,
-  campaignCountries,
-  campaignAd,
-  campaignNotification,
+  endUsers,
+  enduserEvents,
+  notifications,
+  platforms,
+  redirects,
 } from '@/db/schema';
-import { eq, and, inArray, sql, notInArray } from 'drizzle-orm';
-import { domainsMatch } from '@/lib/domain-utils';
+import { eq, and, inArray, sql, arrayContains } from 'drizzle-orm';
+import { domainsMatch, redirectSourceMatchesVisit } from '@/lib/domain-utils';
+import type { ExtensionPlanValue } from '@/lib/extension-user-subscription';
+import { resolveEndUserFromRequest } from '@/lib/enduser-auth';
+import {
+  getCachedPlatformList,
+  setCachedPlatformList,
+} from '@/lib/redis';
+import { logger } from '@/lib/logger';
+import { checkAdBlockRateLimit } from '@/lib/rate-limit';
 
 function isNewUser(createdAt: Date, withinDays = 7): boolean {
   const cutoff = new Date();
@@ -44,7 +50,7 @@ function isCampaignActive(
   return true;
 }
 
-/** Get 2-letter country code from request headers (Vercel, Cloudflare, etc.) */
+/** Get 2-letter country code from request headers (e.g. Vercel `x-vercel-ip-country`) */
 function getCountryFromHeaders(request: NextRequest): string | null {
   const vercel = request.headers.get('x-vercel-ip-country');
   if (vercel && /^[A-Z]{2}$/i.test(vercel)) return vercel.toUpperCase();
@@ -64,16 +70,27 @@ type CampaignRow = {
   status: string;
   startDate: Date | null;
   endDate: Date | null;
+  adId: string | null;
+  notificationId: string | null;
+  redirectId: string | null;
+  platformIds: string[] | null;
+  countryCodes: string[] | null;
 };
 
 /**
  * POST /api/extension/ad-block
  * Returns ads and/or notifications per campaign rules.
- * Body: { visitorId: string, domain?: string, requestType?: "ad" | "notification" }
+ * Header: Authorization: Bearer <token> (from POST /api/extension/auth/login or register)
+ * Body: { domain?, requestType?, userAgent? }
  * - domain is required when requesting ads; optional when requestType is "notification" only.
  */
 export async function POST(request: NextRequest) {
   try {
+    const rateLimitResponse = await checkAdBlockRateLimit(request);
+    if (rateLimitResponse) {
+      return rateLimitResponse;
+    }
+
     const contentType = request.headers.get('content-type');
     if (!contentType?.includes('application/json')) {
       return NextResponse.json(
@@ -82,7 +99,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let body: { visitorId?: string; domain?: string; requestType?: 'ad' | 'notification' };
+    let body: {
+      domain?: string;
+      requestType?: 'ad' | 'notification';
+      userAgent?: string;
+    };
     try {
       body = await request.json();
     } catch (parseError) {
@@ -95,17 +116,59 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { visitorId, domain, requestType } = body;
+    const { domain, requestType } = body;
 
-    const country = getCountryFromHeaders(request);
-    // console.log('[ad-block] req', { visitorId, domain: domain ?? null, country, requestType: requestType ?? null });
-
-    if (!visitorId) {
+    const resolved = await resolveEndUserFromRequest(request);
+    if (!resolved) {
       return NextResponse.json(
-        { error: 'visitorId is required' },
-        { status: 400 }
+        {
+          error: 'Unauthorized',
+          hint: 'Send Authorization: Bearer <token> from POST /api/extension/auth/provision, login, or register',
+        },
+        { status: 401 }
       );
     }
+    const authUser = resolved.endUser;
+    if (authUser.status !== 'active') {
+      return NextResponse.json(
+        { error: 'Account is not active', status: authUser.status },
+        { status: 403 }
+      );
+    }
+
+    const nowCheck = new Date();
+    if (
+      authUser.plan === 'trial' &&
+      authUser.endDate &&
+      nowCheck > new Date(authUser.endDate)
+    ) {
+      return NextResponse.json(
+        {
+          error: 'trial_expired',
+          hint: 'Log in or upgrade your plan to continue using the extension.',
+        },
+        { status: 403 }
+      );
+    }
+
+    const endUserId = authUser.id;
+    const emailForDb = authUser.email ?? null;
+    const planForDb: ExtensionPlanValue = authUser.plan === 'paid' ? 'paid' : 'trial';
+
+    const rawUserAgent =
+      typeof body.userAgent === 'string' && body.userAgent.trim() !== ''
+        ? body.userAgent
+        : request.headers.get('user-agent');
+    const userAgentForDb = rawUserAgent?.trim() ? rawUserAgent.trim().slice(0, 2000) : null;
+
+    const country = getCountryFromHeaders(request);
+    if (country && country !== authUser.country) {
+      await db
+        .update(endUsers)
+        .set({ country, updatedAt: new Date() })
+        .where(eq(endUsers.id, authUser.id));
+    }
+    // console.log('[ad-block] req', { endUserId, domain: domain ?? null, country, requestType: requestType ?? null });
 
     // Domain is required for ads only; optional for notifications (served everywhere when not specified)
     const isNotificationOnly = requestType === 'notification';
@@ -125,13 +188,17 @@ export async function POST(request: NextRequest) {
 
     const shouldFetchAds = requestType === undefined || requestType === 'ad';
     const shouldFetchNotifications = requestType === undefined || requestType === 'notification';
+    const shouldFetchRedirects = Boolean(domain);
 
     const now = new Date();
 
-    const allPlatformsList = await db
-      .select({ id: platforms.id, domain: platforms.domain })
-      .from(platforms)
-      .where(eq(platforms.isActive, true));
+    let allPlatformsList = await getCachedPlatformList();
+    if (!allPlatformsList) {
+      allPlatformsList = await db
+        .select({ id: platforms.id, domain: platforms.domain })
+        .from(platforms);
+      await setCachedPlatformList(allPlatformsList);
+    }
 
     const platform = domain ? allPlatformsList.find((p) => domainsMatch(p.domain, domain)) : null;
 
@@ -139,154 +206,122 @@ export async function POST(request: NextRequest) {
 
     type AdOut = { title: string; image: string | null; description: string | null; redirectUrl: string | null; htmlCode?: string | null; displayAs?: 'inline' | 'popup' };
     type NotifOut = { title: string; message: string; ctaLink?: string | null };
+    type RedirectOut = {
+      sourceDomain: string;
+      includeSubdomains: boolean;
+      destinationUrl: string;
+      campaignId: string;
+    };
     let publicAds: AdOut[] = [];
     let publicNotifications: NotifOut[] = [];
+    const publicRedirects: RedirectOut[] = [];
+
+    const campaignSelect = {
+      id: campaigns.id,
+      targetAudience: campaigns.targetAudience,
+      campaignType: campaigns.campaignType,
+      frequencyType: campaigns.frequencyType,
+      frequencyCount: campaigns.frequencyCount,
+      timeStart: campaigns.timeStart,
+      timeEnd: campaigns.timeEnd,
+      status: campaigns.status,
+      startDate: campaigns.startDate,
+      endDate: campaigns.endDate,
+      adId: campaigns.adId,
+      notificationId: campaigns.notificationId,
+      redirectId: campaigns.redirectId,
+      platformIds: campaigns.platformIds,
+      countryCodes: campaigns.countryCodes,
+    } as const;
 
     // Resolve campaigns:
-    // - When platform exists: campaigns linked to that platform (ads + notifications)
-    // - Always: notification campaigns with NO platforms (empty domain list = no domain restriction)
-    const [platformCampaigns, globalNotifCampaigns] = await Promise.all([
+    // - When platform exists: campaigns linked to that platform (ads, notifications, redirects)
+    // - Global notification: no platforms
+    // - Global redirect: no platforms
+    const [platformCampaigns, globalNotifCampaigns, globalRedirectCampaigns] = await Promise.all([
       platform
-        ? db
-          .select({
-            id: campaigns.id,
-            targetAudience: campaigns.targetAudience,
-            campaignType: campaigns.campaignType,
-            frequencyType: campaigns.frequencyType,
-            frequencyCount: campaigns.frequencyCount,
-            timeStart: campaigns.timeStart,
-            timeEnd: campaigns.timeEnd,
-            status: campaigns.status,
-            startDate: campaigns.startDate,
-            endDate: campaigns.endDate,
-          })
-          .from(campaigns)
-          .innerJoin(campaignPlatforms, eq(campaignPlatforms.campaignId, campaigns.id))
-          .where(eq(campaignPlatforms.platformId, platform.id))
+        ? db.select(campaignSelect).from(campaigns).where(arrayContains(campaigns.platformIds, [platform.id]))
         : [],
-      (async () => {
-        const campaignIdsWithPlatforms = await db
-          .selectDistinct({ campaignId: campaignPlatforms.campaignId })
-          .from(campaignPlatforms);
-        const ids = campaignIdsWithPlatforms.map((r) => r.campaignId);
-        return ids.length > 0
-          ? db
-            .select({
-              id: campaigns.id,
-              targetAudience: campaigns.targetAudience,
-              campaignType: campaigns.campaignType,
-              frequencyType: campaigns.frequencyType,
-              frequencyCount: campaigns.frequencyCount,
-              timeStart: campaigns.timeStart,
-              timeEnd: campaigns.timeEnd,
-              status: campaigns.status,
-              startDate: campaigns.startDate,
-              endDate: campaigns.endDate,
-            })
-            .from(campaigns)
-            .where(and(eq(campaigns.campaignType, 'notification'), notInArray(campaigns.id, ids)))
-          : db
-            .select({
-              id: campaigns.id,
-              targetAudience: campaigns.targetAudience,
-              campaignType: campaigns.campaignType,
-              frequencyType: campaigns.frequencyType,
-              frequencyCount: campaigns.frequencyCount,
-              timeStart: campaigns.timeStart,
-              timeEnd: campaigns.timeEnd,
-              status: campaigns.status,
-              startDate: campaigns.startDate,
-              endDate: campaigns.endDate,
-            })
-            .from(campaigns)
-            .where(eq(campaigns.campaignType, 'notification'));
-      })(),
+      db
+        .select(campaignSelect)
+        .from(campaigns)
+        .where(
+          and(eq(campaigns.campaignType, 'notification'), sql`cardinality(${campaigns.platformIds}) = 0`)
+        ),
+      db
+        .select(campaignSelect)
+        .from(campaigns)
+        .where(
+          and(eq(campaigns.campaignType, 'redirect'), sql`cardinality(${campaigns.platformIds}) = 0`)
+        ),
     ]);
 
     const platformRows = platformCampaigns;
-    const globalRows = globalNotifCampaigns;
     const seenIds = new Set<string>();
     const campaignsForPlatform: CampaignRow[] = [];
     for (const c of platformRows) {
       if (!seenIds.has(c.id)) {
         seenIds.add(c.id);
-        campaignsForPlatform.push(c);
+        campaignsForPlatform.push(c as CampaignRow);
       }
     }
-    for (const c of globalRows) {
+    for (const c of globalNotifCampaigns) {
       if (!seenIds.has(c.id)) {
         seenIds.add(c.id);
-        campaignsForPlatform.push(c);
+        campaignsForPlatform.push(c as CampaignRow);
+      }
+    }
+    for (const c of globalRedirectCampaigns) {
+      if (!seenIds.has(c.id)) {
+        seenIds.add(c.id);
+        campaignsForPlatform.push(c as CampaignRow);
       }
     }
     const campaignIds = campaignsForPlatform.map((c) => c.id);
 
-    const [visitorFirstSeen, countryRows, viewCountRows, campaignAdRows, campaignNotifRows] = await Promise.all([
+    const endUserIdStr = String(endUserId);
+
+    const [endUserFirstSeen, viewCountRows] = await Promise.all([
       db
-        .select({ createdAt: sql<Date>`MIN(${visitors.createdAt})`.as('created_at') })
-        .from(visitors)
-        .where(eq(visitors.visitorId, visitorId)),
-      campaignIds.length > 0
-        ? db
-          .select({ campaignId: campaignCountries.campaignId, countryCode: campaignCountries.countryCode })
-          .from(campaignCountries)
-          .where(inArray(campaignCountries.campaignId, campaignIds))
-        : [],
+        .select({ createdAt: sql<Date>`MIN(${enduserEvents.createdAt})`.as('created_at') })
+        .from(enduserEvents)
+        .where(eq(enduserEvents.endUserId, endUserIdStr)),
       campaignIds.length > 0
         ? db
           .select({
-            campaignId: visitors.campaignId,
+            campaignId: enduserEvents.campaignId,
             viewCount: sql<number>`COUNT(*)`.as('view_count'),
           })
-          .from(visitors)
+          .from(enduserEvents)
           .where(
             and(
-              eq(visitors.visitorId, visitorId),
-              inArray(visitors.campaignId, campaignIds)
+              eq(enduserEvents.endUserId, endUserIdStr),
+              inArray(enduserEvents.campaignId, campaignIds)
             )
           )
-          .groupBy(visitors.campaignId)
-        : [],
-      campaignIds.length > 0
-        ? db
-          .select({ campaignId: campaignAd.campaignId, adId: campaignAd.adId })
-          .from(campaignAd)
-          .where(inArray(campaignAd.campaignId, campaignIds))
-        : [],
-      campaignIds.length > 0
-        ? db
-          .select({ campaignId: campaignNotification.campaignId, notificationId: campaignNotification.notificationId })
-          .from(campaignNotification)
-          .where(inArray(campaignNotification.campaignId, campaignIds))
+          .groupBy(enduserEvents.campaignId)
         : [],
     ]);
 
-    const visitorCreatedAt = visitorFirstSeen[0]?.createdAt ?? now;
-    const visitorCountry = country;
-    const isNew = isNewUser(visitorCreatedAt);
+    const endUserCreatedAt = endUserFirstSeen[0]?.createdAt ?? authUser.startDate;
+    const endUserGeoCountry = country;
+    const isNew = isNewUser(endUserCreatedAt);
     const currentMinutes = currentTimeInMinutes();
 
     const campaignCountryMap = new Map<string, Set<string>>();
-    for (const row of countryRows) {
-      if (!campaignCountryMap.has(row.campaignId)) {
-        campaignCountryMap.set(row.campaignId, new Set());
+    for (const c of campaignsForPlatform) {
+      const codes = c.countryCodes;
+      if (codes && codes.length > 0) {
+        campaignCountryMap.set(
+          c.id,
+          new Set(codes.map((code) => String(code).toUpperCase()))
+        );
       }
-      campaignCountryMap.get(row.campaignId)!.add(row.countryCode.toUpperCase());
     }
 
     const viewCountMap = new Map<string, number>();
     for (const row of viewCountRows) {
       if (row.campaignId) viewCountMap.set(row.campaignId, Number(row.viewCount));
-    }
-
-    const campaignAdMap = new Map<string, string>();
-    for (const row of campaignAdRows) {
-      campaignAdMap.set(row.campaignId, row.adId);
-    }
-
-    const campaignNotifMap = new Map<string, string>();
-    for (const row of campaignNotifRows) {
-      campaignNotifMap.set(row.campaignId, row.notificationId);
     }
 
     const qualifyingCampaigns: CampaignRow[] = [];
@@ -314,8 +349,8 @@ export async function POST(request: NextRequest) {
 
       const campaignCountriesSet = campaignCountryMap.get(c.id);
       if (campaignCountriesSet && campaignCountriesSet.size > 0) {
-        if (!visitorCountry) continue;
-        if (!campaignCountriesSet.has(visitorCountry)) continue;
+        if (!endUserGeoCountry) continue;
+        if (!campaignCountriesSet.has(endUserGeoCountry)) continue;
       }
 
       qualifyingCampaigns.push(c);
@@ -326,13 +361,13 @@ export async function POST(request: NextRequest) {
 
     for (const c of qualifyingCampaigns) {
       if (c.campaignType === 'ads' || c.campaignType === 'popup') {
-        const adId = campaignAdMap.get(c.id);
+        const adId = c.adId;
         if (adId) {
           adIds.set(adId, c.campaignType === 'popup' ? 'popup' : 'inline');
         }
       }
       if (c.campaignType === 'notification') {
-        const notifId = campaignNotifMap.get(c.id);
+        const notifId = c.notificationId;
         if (notifId) notificationIds.add(notifId);
       }
     }
@@ -366,7 +401,7 @@ export async function POST(request: NextRequest) {
     const servedNotificationIds = new Set<string>();
     if (shouldFetchNotifications && notificationIds.size > 0) {
       // Notifications come from qualifying campaigns only. Campaign filters (frequency, country, time, etc.)
-      // and viewCount from visitors determine if we should serve.
+      // and viewCount from extension user events determine if we should serve.
       const notifList = await db
         .select({
           id: notifications.id,
@@ -387,41 +422,141 @@ export async function POST(request: NextRequest) {
       for (const n of notifList) servedNotificationIds.add(n.id);
     }
 
-    // Insert visitor events: one row per campaign served, or one 'request' row when nothing served
-    const logDomain = domain ?? 'extension';
-    const visitorEvents: { visitorId: string; campaignId: string; domain: string; country: string | null; type: 'ad' | 'notification' | 'popup'; statusCode: number }[] = [];
-    for (const c of qualifyingCampaigns) {
-      const adId = campaignAdMap.get(c.id);
-      const notifId = campaignNotifMap.get(c.id);
-      if (c.campaignType === 'ads' && shouldFetchAds && adId && servedAdIds.has(adId)) {
-        visitorEvents.push({ visitorId, campaignId: c.id, domain: logDomain, country: country, type: 'ad', statusCode: 200 });
-      }
-      if (c.campaignType === 'popup' && shouldFetchAds && adId && servedAdIds.has(adId)) {
-        visitorEvents.push({ visitorId, campaignId: c.id, domain: logDomain, country: country, type: 'popup', statusCode: 200 });
-      }
-      if (c.campaignType === 'notification' && shouldFetchNotifications && notifId && servedNotificationIds.has(notifId)) {
-        visitorEvents.push({ visitorId, campaignId: c.id, domain: logDomain, country: country, type: 'notification', statusCode: 200 });
+    const servedRedirectCampaignIds = new Set<string>();
+    if (shouldFetchRedirects && domain) {
+      const redirectCampaigns = qualifyingCampaigns.filter(
+        (c) => c.campaignType === 'redirect' && c.redirectId
+      );
+      const redirectIdList = [...new Set(redirectCampaigns.map((c) => c.redirectId!))];
+      if (redirectIdList.length > 0) {
+        const redirectRows = await db
+          .select({
+            id: redirects.id,
+            sourceDomain: redirects.sourceDomain,
+            includeSubdomains: redirects.includeSubdomains,
+            destinationUrl: redirects.destinationUrl,
+          })
+          .from(redirects)
+          .where(inArray(redirects.id, redirectIdList));
+
+        const redirectById = new Map(redirectRows.map((r) => [r.id, r]));
+
+        for (const c of redirectCampaigns) {
+          const r = c.redirectId ? redirectById.get(c.redirectId) : undefined;
+          if (!r) continue;
+          if (!redirectSourceMatchesVisit(domain, r.sourceDomain, r.includeSubdomains)) continue;
+          publicRedirects.push({
+            sourceDomain: r.sourceDomain,
+            includeSubdomains: r.includeSubdomains,
+            destinationUrl: r.destinationUrl,
+            campaignId: c.id,
+          });
+          servedRedirectCampaignIds.add(c.id);
+        }
       }
     }
-    if (visitorEvents.length > 0) {
-      await db.insert(visitors).values(visitorEvents);
+
+    // Insert end-user events: one row per campaign served, or one 'request' row when nothing served
+    const logDomain = domain ?? 'extension';
+    const serveEventRows: {
+      endUserId: string;
+      email: string | null;
+      plan: ExtensionPlanValue;
+      campaignId: string;
+      domain: string;
+      country: string | null;
+      type: 'ad' | 'notification' | 'popup' | 'redirect';
+      statusCode: number;
+      userAgent: string | null;
+    }[] = [];
+    for (const c of qualifyingCampaigns) {
+      const adId = c.adId;
+      const notifId = c.notificationId;
+      if (c.campaignType === 'ads' && shouldFetchAds && adId && servedAdIds.has(adId)) {
+        serveEventRows.push({
+          endUserId: endUserIdStr,
+          email: emailForDb,
+          plan: planForDb,
+          campaignId: c.id,
+          domain: logDomain,
+          country: country,
+          type: 'ad',
+          statusCode: 200,
+          userAgent: userAgentForDb,
+        });
+      }
+      if (c.campaignType === 'popup' && shouldFetchAds && adId && servedAdIds.has(adId)) {
+        serveEventRows.push({
+          endUserId: endUserIdStr,
+          email: emailForDb,
+          plan: planForDb,
+          campaignId: c.id,
+          domain: logDomain,
+          country: country,
+          type: 'popup',
+          statusCode: 200,
+          userAgent: userAgentForDb,
+        });
+      }
+      if (c.campaignType === 'notification' && shouldFetchNotifications && notifId && servedNotificationIds.has(notifId)) {
+        serveEventRows.push({
+          endUserId: endUserIdStr,
+          email: emailForDb,
+          plan: planForDb,
+          campaignId: c.id,
+          domain: logDomain,
+          country: country,
+          type: 'notification',
+          statusCode: 200,
+          userAgent: userAgentForDb,
+        });
+      }
+      if (
+        c.campaignType === 'redirect' &&
+        shouldFetchRedirects &&
+        c.redirectId &&
+        servedRedirectCampaignIds.has(c.id)
+      ) {
+        serveEventRows.push({
+          endUserId: endUserIdStr,
+          email: emailForDb,
+          plan: planForDb,
+          campaignId: c.id,
+          domain: logDomain,
+          country: country,
+          type: 'redirect',
+          statusCode: 200,
+          userAgent: userAgentForDb,
+        });
+      }
+    }
+    if (serveEventRows.length > 0) {
+      await db.insert(enduserEvents).values(serveEventRows);
     } else {
       // Log every request, even when nothing served
-      await db.insert(visitors).values({
-        visitorId,
+      await db.insert(enduserEvents).values({
+        endUserId: endUserIdStr,
+        email: emailForDb,
+        plan: planForDb,
         campaignId: null,
         domain: logDomain,
         country: country,
         type: 'request',
         statusCode: 200,
+        userAgent: userAgentForDb,
       });
     }
 
-    const res = { ads: publicAds, notifications: publicNotifications };
-    console.log('[ad-block] res', { domain: domain ?? 'extension', ads: publicAds.length, notifications: publicNotifications.length });
+    const res = { ads: publicAds, notifications: publicNotifications, redirects: publicRedirects };
+    logger.debug('[ad-block] res', {
+      domain: domain ?? 'extension',
+      ads: publicAds.length,
+      notifications: publicNotifications.length,
+      redirects: publicRedirects.length,
+    });
     return NextResponse.json(res);
   } catch (error) {
-    console.error('Error fetching extension ad block:', error);
+    logger.error('extension/ad-block failed', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     const isDev = process.env.NODE_ENV !== 'production';
     return NextResponse.json(

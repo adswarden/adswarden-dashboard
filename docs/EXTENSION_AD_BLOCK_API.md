@@ -1,15 +1,13 @@
-# Extension API — Ad Block & Notifications
+# Extension API — Ad Block, Auth & Notifications
 
-Short reference: endpoints, request/response shapes, and cURL. **User ID (`visitorId`) is provided by the extension.** Responses are arrays for ads and notifications.
+Short reference: auth, endpoints, request/response shapes, and cURL. **Extension users get a Bearer token** from **`POST /api/extension/auth/provision`** (anonymous install), **`/login`**, or **`/register`**, and send it on `POST /api/extension/ad-block`. Plan, email, short id, and user id come from the server — not from the request body.
 
 ## How this doc relates to EXTENSION_API_REFERENCE.md
 
 | Document | Use when |
 |----------|----------|
-| **EXTENSION_AD_BLOCK_API.md** (this file) | You want a compact endpoint cheat sheet: paths, request/response shapes, and cURL. Same API. |
-| **EXTENSION_API_REFERENCE.md** | You want the full reference: **recommended extension connection flow**, TypeScript types, error handling, and code examples. Use that doc to integrate the correct endpoints and flow into your extension. |
-
-Both describe the **same API**. For the recommended flow (connect to live SSE → user marked active → pull on first connect → pull on notification event → ad-block on page loads), see **EXTENSION_API_REFERENCE.md**.
+| **EXTENSION_AD_BLOCK_API.md** (this file) | Compact cheat sheet: auth, paths, bodies, cURL. |
+| **EXTENSION_API_REFERENCE.md** | Full reference: recommended flow, TypeScript types, error handling, longer examples. |
 
 ---
 
@@ -18,159 +16,160 @@ Both describe the **same API**. For the recommended flow (connect to live SSE �
 | Environment | Base URL |
 |-------------|---------|
 | Local      | `http://localhost:3000` |
-| Production | Your deployed dashboard origin (e.g. `https://your-dashboard.example.com`) |
-
-All paths below are relative to this base.
+| Production | Your deployed dashboard origin |
 
 ---
 
-## Endpoint 1: Live (SSE) — real-time notifications and connection count
+## Authentication (extension end users)
+
+End users are **not** the same as dashboard admins (Better Auth). They use:
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/extension/auth/provision` | POST | **First install:** `{ installationId }` → anonymous trial user + **token** (store id in `chrome.storage.local`) |
+| `/api/extension/auth/register` | POST | Create account, or **upgrade** anonymous: same body + **`Authorization: Bearer`** from provision |
+| `/api/extension/auth/login` | POST | Email + password → session **token** |
+| `/api/extension/auth/logout` | POST | Invalidate current session (`Authorization: Bearer`) |
+| `/api/extension/auth/me` | GET | Validate token, return profile |
+
+**Login / register response (example):**
+
+```json
+{
+  "token": "<opaque-token>",
+  "expiresAt": "2025-04-01T12:00:00.000Z",
+  "user": {
+    "id": "uuid",
+    "email": "user@example.com",
+    "shortId": "a1b2c3d4",
+    "installationId": null,
+    "name": null,
+    "plan": "trial",
+    "status": "active",
+    "country": null,
+    "startDate": "...",
+    "endDate": null,
+    "createdAt": "..."
+  }
+}
+```
+
+Store **`token`** securely (e.g. `chrome.storage.local`). Send it on every **ad-block** request:
+
+```http
+Authorization: Bearer <token>
+```
+
+Session lifetime defaults to **30 days** unless `ENDUSER_SESSION_DAYS` is set.
+
+Anonymous trial length (provision + new anonymous admin users) defaults to **7 days** unless **`DEFAULT_TRIAL_DAYS`** is set on the server.
+
+### Provision (anonymous)
+
+`POST /api/extension/auth/provision`  
+**Body:** `{ "installationId": "..." }` — stable id from the extension (e.g. random UUID stored in `chrome.storage.local` on first run). Min length 8; `[a-zA-Z0-9_-]` only.  
+**Response:** same shape as login (`token`, `expiresAt`, `user`). For new installs, `user.email` is `null`, `user.endDate` is set from **`DEFAULT_TRIAL_DAYS`**.
+
+### Register (API)
+
+`POST /api/extension/auth/register`  
+**Body:** `{ "email": "...", "password": "...", "name?": "..." }`  
+**Password:** min 8 characters.  
+**Account merge:** if the client sends **`Authorization: Bearer <token>`** from an anonymous provisioned user, the same row is updated with email/password (same `id` / `shortId`).
+
+### Login
+
+`POST /api/extension/auth/login`  
+**Body:** `{ "email": "...", "password": "..." }`
+
+### Logout
+
+`POST /api/extension/auth/logout`  
+**Header:** `Authorization: Bearer <token>`
+
+### Me
+
+`GET /api/extension/auth/me`  
+**Header:** `Authorization: Bearer <token>`
+
+---
+
+## Endpoint: Live (SSE)
 
 | | |
 |---|---|
 | **Method** | `GET` |
 | **Path**   | `/api/extension/live` |
 
-Server-Sent Events (SSE) stream. **Connect here first** so the user is marked **live/active** (Redis is updated; the dashboard shows the connection count via its own SSE). When the admin creates or updates a notification, you receive a `notification` event; **on that event** call `POST /api/extension/ad-block` with `{ visitorId, requestType: "notification" }` to **pull** and show the new notifications. No domain needed. When the admin creates, updates, or deletes a platform (domain), you receive a `domains` event; **on that event** call `GET /api/extension/domains` to refresh your internal domains list. Optional query param `visitorId`.
+Server-Sent Events: connection count, `notification` events (pull new content via ad-block), `domains` events (refresh domain list). **No auth required** for this stream.
 
-### Request
+When you receive a **`notification`** event, call **`POST /api/extension/ad-block`** with **`Authorization: Bearer`** and body `{ "requestType": "notification" }` (no `domain`).
 
-- **URL:** `GET {BASE_URL}/api/extension/live` (optional: `?visitorId=...`)
-- **Headers:** None required. Browser `EventSource` sends `Accept: text/event-stream` automatically.
-
-### Response
-
-- **Content-Type:** `text/event-stream`
-- **Events:**
-
-| Event              | Description |
-|--------------------|-------------|
-| `connection_count` | Sent once when you connect. `data` is the current number of connected clients (string number). |
-| `notification`     | Sent when the admin creates or updates a notification. `data` is a JSON string. |
-| `domains`          | Sent when the admin creates, updates, or deletes a platform. **On this event**, call `GET /api/extension/domains` to refresh your internal domains list. |
-
-### Notification event data (JSON)
-
-When `event` is `notification`, `data` is a JSON string with shape:
-
-```json
-{
-  "type": "new" | "updated",
-  "id": "uuid",
-  "title": "string",
-  "message": "string",
-  "startDate": "ISO8601",
-  "endDate": "ISO8601"
-}
-```
-
-### Reconnection
-
-The connection may close after a **platform timeout** (e.g. ~5 minutes on serverless). The extension should **reconnect** when the stream ends or errors:
-
-- Listen for `error` and `close` on the `EventSource`.
-- Reopen the connection (e.g. create a new `EventSource` to the same URL) after a short delay. Optional: use exponential backoff for repeated failures.
-
-### Example (extension)
-
-```javascript
-const baseUrl = 'https://your-dashboard.example.com';
-const visitorId = 'user-stable-id-abc';
-const url = baseUrl + '/api/extension/live?visitorId=' + encodeURIComponent(visitorId);
-const es = new EventSource(url);
-
-// On notification event: pull and show (read state recorded via pull)
-es.addEventListener('notification', async () => {
-  const res = await fetch(baseUrl + '/api/extension/ad-block', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ visitorId, requestType: 'notification' }),
-  });
-  const { notifications } = await res.json();
-  notifications.forEach((n) => showNotificationBanner(n.title, n.message));
-});
-
-// On domains event: refresh internal domains list
-es.addEventListener('domains', async () => {
-  const res = await fetch(baseUrl + '/api/extension/domains');
-  const { domains } = await res.json();
-  updateInternalDomains(domains);
-});
-
-es.addEventListener('connection_count', (e) => {
-  const count = parseInt(e.data, 10);
-  // Optional: display or log count
-});
-
-es.onerror = () => {
-  es.close();
-  setTimeout(() => connectLive(), 2000);
-};
-```
-
-**Flow:** Connect to live (user becomes active; count reflected on dashboard) → on extension load pull `POST /api/extension/ad-block` with `requestType: "notification"` → on `notification` event pull again and show → use ad-block on page loads. See **EXTENSION_API_REFERENCE.md** for the full recommended connection flow.
+Optional query: `?endUserId=...` (legacy / future; not required for auth).
 
 ---
 
-## Endpoint 2: Fetch Ads and/or Notifications
+## Endpoint: Domains list
+
+`GET /api/extension/domains` → `{ "domains": ["instagram.com", ...] }`  
+**No auth.**
+
+---
+
+## Endpoint: Ad block (pull ads / notifications)
 
 | | |
 |---|---|
 | **Method** | `POST` |
 | **Path**   | `/api/extension/ad-block` |
 
-Fetches ads for the current domain and/or global notifications (pull). the user has not yet “pulled”. Automatically logs visits. **Always returns JSON with `ads` and `notifications` arrays** (one may be empty depending on `requestType`).
-
----
-
-## Request
-
 ### Headers
 
-| Header         | Value              | Required |
-|----------------|--------------------|----------|
-| `Content-Type` | `application/json` | Yes      |
+| Header | Value | Required |
+|--------|-------|----------|
+| `Content-Type` | `application/json` | Yes |
+| `Authorization` | `Bearer <session_token>` | **Yes** — from provision, login, or register |
 
 ### Body (JSON)
 
-| Field         | Type   | Required | Description |
-|---------------|--------|----------|-------------|
-| `visitorId`   | string | Yes      | **Provided by the extension.** Stable anonymous user ID (e.g. generated once, stored in extension storage). Used for analytics and to track which notifications this user has already received. |
-| `domain`      | string | For ads  | Domain where the request originated (e.g. page hostname). **Required when requesting ads**; omit when `requestType: "notification"` only. Normalized: `instagram.com`, `www.instagram.com`, `https://www.instagram.com/` all resolve. |
-| `requestType` | string | No       | `"ad"` \| `"notification"`. If omitted, returns both ads and notifications (domain required). |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `domain` | string | For ads | Page hostname. **Required when fetching ads**; omit when `requestType: "notification"` only. |
+| `requestType` | string | No | `"ad"` \| `"notification"`. Omit = both (domain required for ads). |
+| `userAgent` | string | No | Optional; forwarded for telemetry. |
+
+**Do not send** `endUserId`, `email`, or `plan`. The server resolves the user from the Bearer token and writes **`enduser_events`** with that user’s id and profile fields.
 
 ### Example bodies
 
-**Both ads and notifications (e.g. initial load):**
+**Both ads and notifications:**
+
 ```json
 {
-  "visitorId": "user-stable-id-abc",
   "domain": "instagram.com"
 }
 ```
 
 **Ads only:**
+
 ```json
 {
-  "visitorId": "user-stable-id-abc",
   "domain": "instagram.com",
   "requestType": "ad"
 }
 ```
 
-**Notifications only (e.g. on extension load — no domain needed):**
+**Notifications only (extension load — no domain):**
+
 ```json
 {
-  "visitorId": "user-stable-id-abc",
   "requestType": "notification"
 }
 ```
 
----
+### Response (200)
 
-## Response (200 OK)
-
-**Shape:** Both `ads` and `notifications` are always present and are **arrays**. Use them directly in extension code.
+Always includes **`ads`** and **`notifications`** arrays (each may be empty).
 
 ```json
 {
@@ -194,123 +193,50 @@ Fetches ads for the current domain and/or global notifications (pull). the user 
 }
 ```
 
-### Response rules
+---
 
-- **`ads`**: Array of ad objects for the requested `domain` (platform resolved via domain). Each ad has `displayAs`: `"inline"` (simple ad) or `"popup"` (show as popup). Empty array if domain has no active ads or domain is not configured.
-- **`notifications`**: Array of **global** notifications this user has **not** already pulled. Each notification is returned only once per user (tracked by `visitorId`). Empty array if none or all already shown.
-- If `requestType` is `"ad"`, `notifications` is `[]`.
-- If `requestType` is `"notification"`, `ads` is `[]`.
-- If `requestType` is omitted, both arrays may contain items.
+## Errors (ad-block)
 
-### Ad rendering behavior
-
-| `displayAs` | Behavior |
-|-------------|----------|
-| **`inline`** | Inject ad content into the page. If `htmlCode` exists, insert that HTML directly. Otherwise use `title`, `image`, `description`, `redirectUrl`. |
-| **`popup`** | Create a **modal** and render the ad inside it. If `htmlCode` exists, insert that HTML into the modal. Otherwise use `title`, `image`, `description`, `redirectUrl`. |
-
-### TypeScript types (for extension)
-
-```ts
-// Response type — use when parsing JSON
-interface AdBlockResponse {
-  ads: Array<{
-    title: string;
-    image: string | null;
-    description: string | null;
-    redirectUrl: string | null;
-    htmlCode?: string | null;
-    displayAs?: 'inline' | 'popup';
-  }>;
-  notifications: Array<{
-    title: string;
-    message: string;
-    ctaLink?: string | null;
-  }>;
-}
-```
+| Status | Condition |
+|--------|-----------|
+| 400 | Bad `Content-Type`, invalid JSON, missing `domain` when ads requested, bad `requestType` |
+| 401 | Missing/invalid Bearer token |
+| 403 | End user `status` not `active`, or **`trial_expired`** (`plan` trial and `endDate` in the past) — show login/register UI and offer purchase |
+| 500 | Server error |
 
 ---
 
-## Errors
+## Telemetry / logging
 
-| Status | Condition | Message / behavior |
-|--------|-----------|--------------------|
-| 400    | Missing/invalid `Content-Type` | `"Content-Type must be application/json"` |
-| 400    | Invalid JSON body              | `"Invalid JSON in request body"` + details |
-| 400    | Missing `visitorId` | `"visitorId is required"` |
-| 400    | Missing `domain` when requesting ads | `"domain is required when requesting ads"` |
-| 400    | Invalid `requestType`          | `"requestType must be either \"ad\" or \"notification\""` |
-| 500    | Server/database error          | `"Failed to fetch ad block"` — retry with backoff |
+Successful ad-block calls insert rows into **`enduser_events`** (campaign deliveries, requests, etc.). Profile data (**plan**, **email** may be null for anonymous users, **country** from edge headers) is stored on **`end_users`**.
 
 ---
 
-## Extension usage
+## cURL: login then ad-block
 
-### User ID (`visitorId`)
-
-- **Provided by the extension.** Generate a stable anonymous ID once (e.g. UUID or hash) and store it (e.g. in `chrome.storage` or equivalent). Reuse the same value for all requests so the backend can:
-  - Count requests and last seen per user.
-  - Return only **notifications this user has not yet pulled** (each notification is shown once per user).
-
-### Ads
-
-- Call with the **current page domain** (e.g. from `new URL(tab.url).hostname`).
-- Response **`ads`** is an array; iterate and render (e.g. replace ad slots).
-- Can be called on each page load or when the user navigates to a configured domain.
-
-### Notifications
-
-- **Global:** Notifications are not tied to a domain.
-- **On extension load:** Use **`POST /api/extension/ad-block`** with `{ visitorId, requestType: "notification" }` to get notifications only. No domain needed. Returns `{ ads: [], notifications: [...] }`. Call this when the extension loads.
-- **Once per user:** Each notification is returned only until the user has “pulled” it (tracked by `visitorId`).
-- **Real-time push:** For instant delivery when the admin creates or updates a notification, connect to **`GET /api/extension/live`** (SSE). See Endpoint 1 above.
-
-### Request type
-
-- Omit `requestType`: get both ads and notifications (good for a single “full” fetch).
-- `requestType: "ad"`: only ads (e.g. on every domain page load).
-- `requestType: "notification"`: only notifications (e.g. once per day on extension load).
-
-### CORS
-
-If the extension calls the API from a content script or non-extension context, ensure the dashboard allows the extension’s origin in CORS.
-
----
-
-## Visit logging (automatic)
-
-The endpoint automatically:
-
-- Upserts `extension_users` by `visitorId` (updates `lastSeenAt`, increments `totalRequests`).
-- Inserts into `request_logs` (one row per type when both are requested).
-
-No separate “log” call is required.
-
----
-
-## cURL examples
-
-**Both ads and notifications:**
 ```bash
-curl -X POST http://localhost:3000/api/extension/ad-block \
+BASE_URL=http://localhost:3000
+TOKEN=$(curl -s -X POST "$BASE_URL/api/extension/auth/login" \
   -H "Content-Type: application/json" \
-  -d '{"visitorId":"test-visitor-123","domain":"instagram.com"}'
+  -d '{"email":"you@example.com","password":"your-password"}' | jq -r .token)
+
+curl -X POST "$BASE_URL/api/extension/ad-block" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"domain":"instagram.com"}'
 ```
 
-**Ads only:**
+**Notifications only:**
+
 ```bash
-curl -X POST http://localhost:3000/api/extension/ad-block \
+curl -X POST "$BASE_URL/api/extension/ad-block" \
   -H "Content-Type: application/json" \
-  -d '{"visitorId":"test-visitor-123","domain":"instagram.com","requestType":"ad"}'
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"requestType":"notification"}'
 ```
 
-**Notifications only (on extension load — no domain needed):**
-```bash
-curl -X POST https://test.buildyourresume.in/api/extension/ad-block \
-  -H "Content-Type: application/json" \
-  -d '{"visitorId":"visitor-22","requestType":"notification"}'
-```
-Returns `{ ads: [], notifications: [...] }`. Use this when the extension loads to fetch notifications only.
+---
 
-Replace the base URL with your dashboard URL for staging/production.
+## Public registration page
+
+End users can create an account at **`/register`** on the same dashboard origin; then they sign in from the extension via **`POST /api/extension/auth/login`**.

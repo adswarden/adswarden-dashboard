@@ -5,7 +5,12 @@ const REALTIME_CHANNEL = 'realtime:notifications';
 const REALTIME_COUNT_KEY = 'realtime:connections';
 const REALTIME_COUNT_CHANNEL = 'realtime:connection_count';
 
+/** JSON list of `{ id, domain }` for platforms; used by extension ad-block hot path */
+const EXTENSION_PLATFORMS_KEY = 'extension:platforms:list';
+const EXTENSION_PLATFORMS_TTL_SEC = 60;
+
 export { REALTIME_CHANNEL, REALTIME_COUNT_KEY, REALTIME_COUNT_CHANNEL };
+export type CachedPlatformRow = { id: string; domain: string };
 
 function getRedisUrl(): string | undefined {
   return REDIS_URL && REDIS_URL.trim() !== '' ? REDIS_URL : undefined;
@@ -72,11 +77,69 @@ export async function publishRealtimeNotification(payload: string): Promise<void
 }
 
 /**
- * Publish a platforms_updated event so extension SSE subscribers can refresh their domains.
+ * Invalidate cached active platform list (call when platforms change).
  * No-op if Redis is not configured.
  */
+export async function invalidatePlatformListCache(): Promise<void> {
+  const client = await getRedisClient();
+  if (!client) return;
+  try {
+    await client.del(EXTENSION_PLATFORMS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Read active platforms from short-lived cache (extension ad-block).
+ * Returns null on miss or if Redis unavailable.
+ */
+export async function getCachedPlatformList(): Promise<CachedPlatformRow[] | null> {
+  const client = await getRedisClient();
+  if (!client) return null;
+  try {
+    const raw = await client.get(EXTENSION_PLATFORMS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed as CachedPlatformRow[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Store active platforms in Redis with TTL.
+ */
+export async function setCachedPlatformList(rows: CachedPlatformRow[]): Promise<void> {
+  const client = await getRedisClient();
+  if (!client) return;
+  try {
+    await client.set(EXTENSION_PLATFORMS_KEY, JSON.stringify(rows), {
+      EX: EXTENSION_PLATFORMS_TTL_SEC,
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Publish a platforms_updated event so extension SSE subscribers can refresh their domains.
+ * Clears the platform-list cache so the next ad-block request reloads from DB.
+ * No-op if Redis is not configured (cache helpers no-op too).
+ */
 export async function publishPlatformsUpdated(): Promise<void> {
+  await invalidatePlatformListCache();
   await publishRealtimeNotification(JSON.stringify({ type: 'platforms_updated' }));
+}
+
+/**
+ * Notify extension SSE listeners that campaign targeting may have changed.
+ */
+export async function publishCampaignUpdated(campaignId: string): Promise<void> {
+  await publishRealtimeNotification(
+    JSON.stringify({ type: 'campaign_updated', campaignId })
+  );
 }
 
 /**

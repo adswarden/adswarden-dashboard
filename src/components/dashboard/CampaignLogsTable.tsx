@@ -12,12 +12,12 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { TablePagination } from '@/components/ui/table-pagination';
-import { VisitorIdCell } from '@/components/visitor-id-cell';
+import { EndUserIdCell } from '@/components/enduser-id-cell';
 import { IconRefresh } from '@tabler/icons-react';
 
 interface LogEntry {
   id: string;
-  visitorId: string;
+  endUserId: string;
   domain: string | null;
   type: string;
   statusCode: number | null;
@@ -30,46 +30,39 @@ interface CampaignLogsTableProps {
 
 export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
   const [page, setPage] = React.useState(1);
+  const [refreshNonce, setRefreshNonce] = React.useState(0);
   const [logs, setLogs] = React.useState<LogEntry[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
   const [totalPages, setTotalPages] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  const fetchLogs = React.useCallback(() => {
-    let cancelled = false;
+  React.useEffect(() => {
+    const ac = new AbortController();
     setLoading(true);
     setError(null);
-    fetch(`/api/campaigns/${campaignId}/logs?page=${page}&pageSize=25`)
+    fetch(`/api/campaigns/${campaignId}/logs?page=${page}&pageSize=25`, {
+      signal: ac.signal,
+    })
       .then((res) => {
         if (!res.ok) throw new Error('Failed to fetch logs');
         return res.json();
       })
       .then((data: { logs: LogEntry[]; totalCount: number; totalPages: number }) => {
-        if (!cancelled) {
-          setLogs(data.logs);
-          setTotalCount(data.totalCount);
-          setTotalPages(data.totalPages);
-        }
+        setLogs(data.logs);
+        setTotalCount(data.totalCount);
+        setTotalPages(data.totalPages);
       })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load logs');
-          setLogs([]);
-        }
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        setError(err instanceof Error ? err.message : 'Failed to load logs');
+        setLogs([]);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [campaignId, page]);
-
-  React.useEffect(() => {
-    const cleanup = fetchLogs();
-    return cleanup;
-  }, [fetchLogs]);
+    return () => ac.abort();
+  }, [campaignId, page, refreshNonce]);
 
   if (error) {
     return (
@@ -106,7 +99,7 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
           <Button
             variant="outline"
             size="icon-sm"
-            onClick={fetchLogs}
+            onClick={() => setRefreshNonce((n) => n + 1)}
             disabled={loading}
             aria-label="Refresh logs"
             className="h-8 w-8 cursor-pointer transition-transform hover:scale-105 active:scale-95 disabled:hover:scale-100 disabled:active:scale-100"
@@ -119,7 +112,7 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Visitor</TableHead>
+              <TableHead>End user</TableHead>
               <TableHead>Domain</TableHead>
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
@@ -143,7 +136,7 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
               logs.map((log) => (
                 <TableRow key={log.id}>
                   <TableCell>
-                    <VisitorIdCell visitorId={log.visitorId} />
+                    <EndUserIdCell endUserId={log.endUserId} />
                   </TableCell>
                   <TableCell className="text-sm">{log.domain ?? '—'}</TableCell>
                   <TableCell>

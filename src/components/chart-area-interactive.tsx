@@ -6,7 +6,6 @@ import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 import { useIsMobile } from "@/hooks/use-mobile"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -30,8 +29,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
-
-export const description = "An interactive area chart with extension request data"
+import { cn } from "@/lib/utils"
 
 interface ChartDataPoint {
   date: string
@@ -42,11 +40,11 @@ interface ChartDataPoint {
 const chartConfig = {
   ad: {
     label: "Ad requests",
-    color: "var(--primary)",
+    color: "var(--chart-1)",
   },
   notification: {
     label: "Notification requests",
-    color: "var(--primary)",
+    color: "var(--chart-2)",
   },
 } satisfies ChartConfig
 
@@ -56,7 +54,15 @@ const rangeLabels: Record<string, string> = {
   "7d": "Last 7 days",
 }
 
-export function ChartAreaInteractive() {
+function isAllZeroChartData(data: ChartDataPoint[]) {
+  return data.every((d) => d.ad === 0 && d.notification === 0)
+}
+
+export interface ChartAreaInteractiveProps {
+  className?: string
+}
+
+export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
   const isMobile = useIsMobile()
   const [mounted, setMounted] = React.useState(false)
   const [timeRange, setTimeRange] = React.useState("90d")
@@ -76,7 +82,7 @@ export function ChartAreaInteractive() {
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetch(`/api/analytics/chart?range=${timeRange}`)
+    fetch(`/api/events/chart?range=${timeRange}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch chart data")
         return res.json()
@@ -103,18 +109,21 @@ export function ChartAreaInteractive() {
   }, [timeRange])
 
   const descriptionText = rangeLabels[timeRange] ?? "Last 3 months"
+  const isAllZero = !loading && !error && chartData.length > 0 && isAllZeroChartData(chartData)
 
   return (
-    <Card className="@container/card">
-      <CardHeader>
-        <CardTitle>Extension requests</CardTitle>
-        <CardDescription>
-          <span className="hidden @[540px]/card:block">
-            Ad and notification requests from the extension — {descriptionText.toLowerCase()}
-          </span>
-          <span className="@[540px]/card:hidden">{descriptionText}</span>
-        </CardDescription>
-        <CardAction>
+    <Card className={cn("@container/card relative z-0 py-4 overflow-hidden", className)}>
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between space-y-0 pb-2">
+        <div className="space-y-1">
+          <CardTitle className="text-sm font-medium">Extension events</CardTitle>
+          <CardDescription className="text-xs">
+            <span className="hidden @[540px]/card:block">
+              Ad and notification events from the extension — {descriptionText.toLowerCase()}
+            </span>
+            <span className="@[540px]/card:hidden">{descriptionText}</span>
+          </CardDescription>
+        </div>
+        <div className="flex items-center justify-start sm:justify-end">
           {mounted ? (
             <>
               <ToggleGroup
@@ -150,25 +159,27 @@ export function ChartAreaInteractive() {
               </Select>
             </>
           ) : (
-            <span className="text-sm text-muted-foreground">{rangeLabels[timeRange] ?? "Last 3 months"}</span>
+            <span className="text-xs text-muted-foreground">
+              {rangeLabels[timeRange] ?? "Last 3 months"}
+            </span>
           )}
-        </CardAction>
+        </div>
       </CardHeader>
-      <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+      <CardContent className="pt-0 px-2 sm:px-6">
         {loading ? (
-          <Skeleton className="h-[250px] w-full rounded-lg" />
+          <Skeleton className="h-[220px] w-full rounded-lg" />
         ) : error ? (
-          <div className="flex h-[250px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+          <div className="flex h-[220px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
             {error}
           </div>
         ) : chartData.length === 0 ? (
-          <div className="flex h-[250px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-            No request data for this period
+          <div className="flex h-[220px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
+            No event data for this period
           </div>
         ) : (
           <ChartContainer
             config={chartConfig}
-            className="aspect-auto h-[250px] w-full"
+            className="aspect-auto h-[220px] w-full"
           >
             <AreaChart data={chartData}>
               <defs>
@@ -212,34 +223,38 @@ export function ChartAreaInteractive() {
                   })
                 }}
               />
-              <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    labelFormatter={(value) => {
-                      return new Date(value).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })
-                    }}
-                    indicator="dot"
+              {!isAllZero && (
+                <>
+                  <ChartTooltip
+                    cursor={false}
+                    content={
+                      <ChartTooltipContent
+                        labelFormatter={(value) => {
+                          return new Date(value).toLocaleDateString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                          })
+                        }}
+                        indicator="dot"
+                      />
+                    }
                   />
-                }
-              />
-              <Area
-                dataKey="notification"
-                type="natural"
-                fill="url(#fillNotification)"
-                stroke="var(--color-notification)"
-                stackId="a"
-              />
-              <Area
-                dataKey="ad"
-                type="natural"
-                fill="url(#fillAd)"
-                stroke="var(--color-ad)"
-                stackId="a"
-              />
+                  <Area
+                    dataKey="notification"
+                    type="natural"
+                    fill="url(#fillNotification)"
+                    stroke="var(--color-notification)"
+                    stackId="a"
+                  />
+                  <Area
+                    dataKey="ad"
+                    type="natural"
+                    fill="url(#fillAd)"
+                    stroke="var(--color-ad)"
+                    stackId="a"
+                  />
+                </>
+              )}
             </AreaChart>
           </ChartContainer>
         )}

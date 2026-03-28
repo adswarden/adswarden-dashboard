@@ -1,0 +1,165 @@
+'use client';
+
+import * as React from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { IconPencil } from '@tabler/icons-react';
+
+export interface RecentCampaignRow {
+  id: string;
+  name: string;
+  campaignType: string;
+  status: string;
+  createdAt: Date | string;
+}
+
+interface RecentCampaignsTableProps {
+  campaigns: RecentCampaignRow[];
+  isAdmin: boolean;
+}
+
+function isWithinInteractiveControl(target: EventTarget | null): boolean {
+  const el =
+    target instanceof Element
+      ? target
+      : target instanceof Text
+        ? target.parentElement
+        : null;
+  if (!el) return false;
+  return Boolean(
+    el.closest('a[href], button, input, select, textarea, [role="button"], [role="link"]')
+  );
+}
+
+/** Stable across SSR and client (avoids default-locale / timezone hydration mismatches). */
+function formatCreatedDate(createdAt: Date | string): string {
+  const d = new Date(createdAt);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', {
+    timeZone: 'UTC',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+export function RecentCampaignsTable({ campaigns, isAdmin }: RecentCampaignsTableProps) {
+  const router = useRouter();
+
+  const goToCampaign = React.useCallback(
+    (id: string) => {
+      router.push(`/campaigns/${id}`);
+    },
+    [router]
+  );
+
+  return (
+    <div className="w-full overflow-x-auto">
+      <Table className="w-full table-auto">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="text-muted-foreground text-xs font-normal">
+              Name
+            </TableHead>
+            <TableHead className="text-muted-foreground text-xs font-normal">
+              Type
+            </TableHead>
+            <TableHead className="text-muted-foreground text-xs font-normal">
+              Status
+            </TableHead>
+            <TableHead className="text-muted-foreground text-xs font-normal">
+              Created
+            </TableHead>
+            <TableHead className="text-right text-muted-foreground text-xs font-normal">
+              Actions
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {campaigns.length === 0 ? (
+            <TableRow>
+              <TableCell
+                colSpan={5}
+                className="py-8 text-center text-muted-foreground"
+              >
+                No campaigns yet.
+                {isAdmin
+                  ? ' Create one to start serving ads and notifications through the extension.'
+                  : ' Campaigns created by your team will appear here.'}
+              </TableCell>
+            </TableRow>
+          ) : (
+            campaigns.map((c) => (
+              <TableRow
+                key={c.id}
+                className="cursor-pointer"
+                tabIndex={0}
+                aria-label={`Open campaign ${c.name}`}
+                onClick={(e) => {
+                  if (isWithinInteractiveControl(e.target)) return;
+                  goToCampaign(c.id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    goToCampaign(c.id);
+                  }
+                }}
+              >
+                <TableCell className="py-2 overflow-hidden font-medium min-w-0">
+                  <Link
+                    href={`/campaigns/${c.id}`}
+                    className="text-foreground block truncate hover:underline underline-offset-4"
+                    title={c.name}
+                  >
+                    {c.name}
+                  </Link>
+                </TableCell>
+                <TableCell className="py-2 overflow-hidden">
+                  <Badge variant="outline">{c.campaignType}</Badge>
+                </TableCell>
+                <TableCell className="py-2 overflow-hidden">
+                  <Badge
+                    variant={
+                      c.status === 'active'
+                        ? 'default'
+                        : c.status === 'expired'
+                          ? 'destructive'
+                          : 'secondary'
+                    }
+                  >
+                    {c.status}
+                  </Badge>
+                </TableCell>
+                <TableCell className="py-2 text-sm text-muted-foreground">
+                  {formatCreatedDate(c.createdAt)}
+                </TableCell>
+                <TableCell className="py-2 text-right">
+                  <div className="flex justify-end gap-1">
+                    {isAdmin && (
+                      <Button variant="ghost" size="icon" asChild>
+                        <Link href={`/campaigns/${c.id}/edit`} aria-label="Edit campaign">
+                          <IconPencil className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}

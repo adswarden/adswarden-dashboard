@@ -3,7 +3,7 @@
 
 Project Adwarden {
   database_type: 'PostgreSQL'
-  Note: 'Campaign-centric ad/notification delivery. visitors = event log (one row per serve).'
+  Note: 'Campaign-centric ad/notification delivery. enduser_events = one row per serve. Admin list APIs and UIs may attach linkedCampaignCount to ads, notifications, and redirects (derived: count campaigns by ad_id, notification_id, redirect_id; not stored columns).'
 }
 
 // ============ Enums ============
@@ -38,10 +38,11 @@ Enum campaign_status {
   expired
 }
 
-Enum visitor_event_type {
+Enum enduser_event_type {
   ad
   notification
   popup
+  request
 }
 
 // ============ Auth ============
@@ -97,7 +98,6 @@ Table platforms {
   id uuid [pk]
   name varchar(255) [not null]
   domain varchar(255) [not null]
-  is_active boolean [not null, default: true]
   created_at timestamp [not null]
   updated_at timestamp [not null]
 }
@@ -125,9 +125,9 @@ Table notifications {
 Table notification_reads {
   id uuid [pk]
   notification_id uuid [not null]
-  visitor_id varchar(255) [not null]
+  enduser_id varchar(255) [not null]
   read_at timestamp [not null]
-  Index unique_notification_visitor (notification_id, visitor_id) [unique]
+  Index unique_notification_enduser (notification_id, enduser_id) [unique]
 }
 
 // ============ Campaigns ============
@@ -143,43 +143,35 @@ Table campaigns {
   status campaign_status [not null, default: 'inactive']
   start_date timestamp
   end_date timestamp
-  created_by varchar(255) [not null]
+  ad_id uuid [ref: > ads.id, note: 'Nullable; set for ads/popup campaigns']
+  notification_id uuid [ref: > notifications.id, note: 'Nullable; set for notification campaigns']
+  redirect_id uuid [note: 'Nullable; set for redirect campaigns; ref redirects.id when table present']
+  platform_ids uuid[] [not null, note: 'Target platforms; empty with notification = global (all domains)']
+  country_codes varchar(2)[] [not null, note: 'Geo targeting; empty = all countries']
+  created_by varchar(255) [not null, default: 'SYSTEM', note: 'Reverts to SYSTEM user when creator deleted']
   created_at timestamp [not null]
   updated_at timestamp [not null]
 }
 
-Table campaign_platforms {
-  campaign_id uuid [pk]
-  platform_id uuid [pk]
+// ============ Extension end-user events ============
+Enum enduser_user_plan {
+  trial
+  paid
 }
 
-Table campaign_countries {
-  campaign_id uuid [pk]
-  country_code varchar(2) [pk]
-}
-
-Table campaign_ad {
-  campaign_id uuid [pk, ref: > campaigns.id]
-  ad_id uuid [pk, ref: > ads.id]
-  Note: 'Same ad can be used in multiple campaigns'
-}
-
-Table campaign_notification {
-  campaign_id uuid [pk, ref: > campaigns.id]
-  notification_id uuid [pk, ref: > notifications.id]
-  Note: 'Same notification can be used in multiple campaigns'
-}
-
-// ============ Visitors & Analytics ============
-Table visitors {
+Table enduser_events {
   id uuid [pk]
-  visitor_id varchar(255) [not null]
+  enduser_id varchar(255) [not null]
+  email varchar(255)
+  plan enduser_user_plan
   campaign_id uuid
-  domain varchar(255) [not null]
-  type visitor_event_type [not null]
+  domain varchar(255)
+  type enduser_event_type [not null]
   country varchar(2)
+  status_code int
+  user_agent text
   created_at timestamp [not null]
-  Note: 'Event-based: one row per campaign serve'
+  Note: 'Event-based: one row per serve or request'
 }
 
 // ============ Relationships ============
@@ -189,9 +181,7 @@ Ref: campaigns.created_by > user.id
 
 Ref: notification_reads.notification_id > notifications.id
 
-Ref: campaign_platforms.campaign_id > campaigns.id
-Ref: campaign_platforms.platform_id > platforms.id
+Ref: campaigns.ad_id > ads.id
+Ref: campaigns.notification_id > notifications.id
 
-Ref: campaign_countries.campaign_id > campaigns.id
-
-Ref: visitors.campaign_id > campaigns.id
+Ref: enduser_events.campaign_id > campaigns.id

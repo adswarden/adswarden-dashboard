@@ -15,6 +15,7 @@ import { IconPlus } from '@tabler/icons-react';
 import { toast } from 'sonner';
 import { AdForm } from '@/app/(protected)/ads/ad-form';
 import { NotificationForm } from '@/app/(protected)/notifications/notification-form';
+import type { Ad, Notification } from '@/db/schema';
 
 interface CampaignContentDrawerProps {
   campaignId: string;
@@ -25,7 +26,8 @@ export function CampaignContentDrawer({ campaignId, type }: CampaignContentDrawe
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
-  const handleAdSuccess = async (adId?: string) => {
+  const handleAdSuccess = async (ad?: Ad) => {
+    const adId = ad?.id;
     if (!adId) return;
     const res = await fetch(`/api/campaigns/${campaignId}`, {
       method: 'PUT',
@@ -41,7 +43,8 @@ export function CampaignContentDrawer({ campaignId, type }: CampaignContentDrawe
     router.refresh();
   };
 
-  const handleNotificationSuccess = async (notificationId?: string) => {
+  const handleNotificationSuccess = async (notification?: Notification) => {
+    const notificationId = notification?.id;
     if (!notificationId) return;
     const res = await fetch(`/api/campaigns/${campaignId}`, {
       method: 'PUT',

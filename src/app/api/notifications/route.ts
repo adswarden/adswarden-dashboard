@@ -1,23 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
 import { notifications } from '@/db/schema';
+import { desc, sql } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
+import { getLinkedCampaignCountByNotificationIdForIds } from '@/lib/campaign-linked-counts';
 
-// GET all notifications (global, no domain filtering)
-export async function GET() {
+// GET notifications (paginated: ?page=1&pageSize=50)
+export async function GET(request: NextRequest) {
   try {
     const sessionWithRole = await getSessionWithRole();
     if (!sessionWithRole) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Return all notifications for admin dashboard
-    const allNotifications = await db
-      .select()
-      .from(notifications)
-      .orderBy(notifications.createdAt);
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10));
+    const pageSize = Math.min(100, Math.max(1, parseInt(searchParams.get('pageSize') ?? '50', 10)));
+    const offset = (page - 1) * pageSize;
 
-    return NextResponse.json(allNotifications);
+    const [rows, countRow] = await Promise.all([
+      db
+        .select()
+        .from(notifications)
+        .orderBy(desc(notifications.createdAt))
+        .limit(pageSize)
+        .offset(offset),
+      db.select({ count: sql<number>`count(*)` }).from(notifications),
+    ]);
+
+    const linkedByNotificationId =
+      rows.length === 0
+        ? new Map<string, number>()
+        : await getLinkedCampaignCountByNotificationIdForIds(rows.map((r) => r.id));
+
+    const totalCount = Number(countRow[0]?.count ?? 0);
+
+    const data = rows.map((row) => ({
+      ...row,
+      linkedCampaignCount: linkedByNotificationId.get(row.id) ?? 0,
+    }));
+
+    return NextResponse.json({
+      data,
+      page,
+      pageSize,
+      totalCount,
+      totalPages: Math.ceil(totalCount / pageSize),
+    });
   } catch (error) {
     console.error('Error fetching notifications:', error);
     return NextResponse.json({ error: 'Failed to fetch notifications' }, { status: 500 });

@@ -176,7 +176,7 @@ export function ClientComponent({ data }) {
 ### Relationships
 - **Platforms → Ads**: One-to-many (platform_id FK)
 - **Platforms ↔ Notifications**: Many-to-many (notification_platforms join table)
-- **Extension Users → Request Logs**: One-to-many (visitor_id)
+- **Extension end users → event log**: One-to-many (`enduser_id` on `enduser_events`)
 
 ### Query Patterns
 - Use Drizzle query builder

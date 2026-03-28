@@ -23,6 +23,8 @@
 # misc
 .DS_Store
 *.pem
+# accidental backup archives
+tailwind.config.ts.zip
 
 # debug
 npm-debug.log*

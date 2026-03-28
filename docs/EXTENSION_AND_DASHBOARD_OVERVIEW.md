@@ -28,7 +28,7 @@ This document explains how the **browser extension** and **admin dashboard** wor
                     ▲                                    │
                     │                                    │
          Extension calls                        Dashboard calls
-         (no auth)                               (auth required)
+         (Bearer for ad-block; SSE/domains public)  (auth required)
                     │                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         BROWSER EXTENSION (your code)                         │
@@ -49,29 +49,30 @@ This document explains how the **browser extension** and **admin dashboard** wor
 | Component            | Responsibility |
 |----------------------|----------------|
 | **Admin Dashboard**  | Store platforms (domains), ads, and global notifications; serve ads by domain and notifications globally (per-user read tracking); single extension endpoint logs visits and returns data; show analytics. |
-| **Browser Extension**| Provides stable `visitorId`; calls `POST /api/extension/ad-block` to get ads (per domain) and notifications (global, once per user). Renders ads and notifications; no separate log endpoint. |
-| **Database**         | `platforms`, `ads`, `notifications`, `notification_reads`, `extension_users`, `request_logs`. |
-| **Redis**           | Used for admin session (login). Not used for extension traffic. |
+| **Browser Extension**| Users sign in (`POST /api/extension/auth/login`); calls `POST /api/extension/ad-block` with **`Authorization: Bearer`** to get ads (per domain) and notifications. Renders content; telemetry goes to `enduser_events` / `end_users`. |
+| **Database**         | `platforms`, `ads`, `notifications`, `campaigns`, `end_users`, `enduser_sessions`, `enduser_events`, `payments`, etc. (admin auth: Better Auth tables). |
+| **Redis**           | Live SSE / realtime; not the primary store for extension identity. |
 
-**Real-time:** Connect to `GET /api/extension/live` (SSE) to receive a `notification` event when the admin creates/updates a notification; on that event, call `POST /api/extension/ad-block` with `requestType: "notification"` to pull and show. This marks the user as live (dashboard shows connection count). **Skip notification pull when the user is on the dashboard** — admins should not see notifications.
+**Real-time:** Connect to `GET /api/extension/live` (SSE). On `notification`, call `POST /api/extension/ad-block` with **Bearer token** and `{ "requestType": "notification" }`. **Skip notification pull when the user is on the dashboard** — admins should not see notifications.
 
 ---
 
 ## 3. Communication Between Extension and Backend
 
-All communication is **HTTP (REST)**. The extension is the only client of these **public** endpoints (no auth).
+All communication is **HTTP (REST)**.
 
 ### 3.1 Extension → Dashboard (what the extension calls)
 
-All extension endpoints are **public** (no authentication). Do **not** use `/api/notifications` — that is the admin dashboard API and requires an authenticated session. For notifications on extension load, use `POST /api/extension/ad-block` with `{ visitorId, requestType: "notification" }`. No domain needed.
+**`POST /api/extension/ad-block` requires a Bearer session token** from `POST /api/extension/auth/login` (or register). **`GET /api/extension/domains`** and **`GET /api/extension/live`** do not require that token. Do **not** use `/api/notifications` from the extension — that is for the admin UI (Better Auth).
 
 | Purpose              | Method | Endpoint                          | When extension typically calls |
 |----------------------|--------|-----------------------------------|---------------------------------|
-| Live SSE (real-time notification signal) | GET | `/api/extension/live` | Keep open while extension is active. Marks user as live; receive `notification` event when admin creates/updates. |
-| Pull notifications only | POST | `/api/extension/ad-block` | On extension load. Body: `{ visitorId, requestType: "notification" }`. No domain needed. Returns `{ ads: [], notifications: [...] }`. **Skip when user is on the dashboard** — admins should not see notifications. |
-| Get ads/notifications and log visit | POST   | `/api/extension/ad-block`        | On page load or when domain matches. Body: `{ visitorId, domain, requestType? }`. Fetches ads and/or notifications; logging is automatic. |
+| Sign in / register   | POST | `/api/extension/auth/login` / `.../register` | Before calling ad-block; store `token`. |
+| Live SSE             | GET | `/api/extension/live` | Keep open while extension is active. |
+| Pull notifications only | POST | `/api/extension/ad-block` | On extension load. Headers: `Authorization: Bearer`. Body: `{ "requestType": "notification" }`. **Skip when user is on the dashboard**. |
+| Get ads / both       | POST | `/api/extension/ad-block` | Headers: `Authorization: Bearer`. Body: `{ "domain", "requestType"? }`. |
 
-- **Ad Block**: extension sends `{ visitorId, domain, requestType? }`. Ads are resolved by domain; notifications are global and only those not yet pulled by this `visitorId` are returned. Response is always `{ads: [...], notifications: [...]}` (arrays).
+- **Ad block**: User identity and plan come from **`end_users`** via the token — not from the JSON body.
 
 ### 3.2 Dashboard → Extension
 
@@ -85,13 +86,14 @@ So “notification” in the product sense is: **extension pulls notification co
 ### 3.3 Data flow summary
 
 ```
-Extension (provides visitorId; e.g. on example.com for ads)
+Extension (Bearer token from auth/login)
     │
     └─ POST /api/extension/ad-block
-            Body: { visitorId, domain, requestType? }
-            → Dashboard: resolve platform by domain for ads; fetch global notifications not yet read by visitorId
-            → Returns { ads: [...], notifications: [...] } (always arrays)
-            → Automatically: upsert extension_users, insert request_logs
+            Headers: Authorization: Bearer <token>
+            Body: { domain?, requestType? }
+            → Dashboard: resolve end user from token; resolve campaigns/ads by domain
+            → Returns { ads: [...], notifications: [...] }
+            → Writes enduser_events; may update end_users (e.g. country)
 ```
 
 **Recommended:** Call for **ads** on domain page load; call for **notifications** once per day when the user opens the browser or when the extension loads (response is the list of new notifications for that user).
@@ -106,13 +108,13 @@ Full request/response shapes, errors, and TypeScript types: [EXTENSION_AD_BLOCK_
 
 1. **Platforms**: each platform has a **domain** (e.g. `example.com`). Ads are tied to platforms.
 2. **Ads**: linked to one platform; have status (e.g. `active`) and optional start/end dates. Dashboard auto-expires ads when `endDate` has passed.
-3. **Notifications**: global (not tied to domains). Have `startDate` and `endDate`. Each notification is returned to a user only until they have “pulled” it (tracked by `visitorId` in `notification_reads`).
+3. **Notifications**: Delivered per campaign rules; eligibility uses **`enduser_events`** and campaign config (not legacy `notification_reads` in current schema).
 
 ### 4.2 Extension flow (what the extension does)
 
-1. **User ID**: extension provides a stable `visitorId` (e.g. generated once, stored in extension storage).
-2. **Ads**: on domain page load, call `POST /api/extension/ad-block` with `{visitorId, domain}` or `requestType: "ad"`. Use the `ads` array from the response (domain-specific).
-3. **Notifications**: call once per day when the user opens the browser or when the extension loads (e.g. `requestType: "notification"`). Use the `notifications` array; it contains only notifications this user has not yet received. **Skip when the user is on the dashboard** — admins should not see notifications.
+1. **Auth**: extension user logs in; store **Bearer token** securely.
+2. **Ads**: on domain page load, `POST /api/extension/ad-block` with Bearer + `{ domain }` or `requestType: "ad"`.
+3. **Notifications**: same endpoint with `{ requestType: "notification" }` when appropriate. **Skip when the user is on the dashboard**.
 4. Response is always `{ads: [...], notifications: [...]}` (arrays). Logging is automatic.
 
 So “how notification works” is: **dashboard stores global notification content and date range; extension asks “what notifications are new for this user?” once per session/day and displays the returned list.**
@@ -168,22 +170,23 @@ So “many requests each second” usually means: **frequent calls to `/api/exte
 
 ## 7. Quick Reference
 
-### Extension → Dashboard API (public)
+### Extension → Dashboard API
 
-| Endpoint                | Method | Purpose |
-|-------------------------|--------|--------|
-| `/api/extension/live` | GET   | SSE stream. Marks user as live; sends `notification` event when admin creates/updates. Reconnect on close. |
-| `/api/extension/ad-block` | POST   | Get ads (by domain) and/or notifications. Body: `{visitorId, domain, requestType?}`. Use `requestType: "notification"` on extension load to get notifications only. Returns `{ads: [...], notifications: [...]}`. |
+| Endpoint | Method | Purpose |
+|----------|--------|--------|
+| `/api/extension/auth/login` | POST | Email + password → Bearer token |
+| `/api/extension/live` | GET | SSE; reconnect on close |
+| `/api/extension/domains` | GET | List active domains |
+| `/api/extension/ad-block` | POST | **Bearer required.** Body: `{ domain?, requestType? }`. Returns `{ ads: [...], notifications: [...] }`. |
 
-### User ID and response format
+### Auth and response format
 
-- **visitorId**: Provided by the extension (stable anonymous user ID). Used for analytics and to return only notifications the user has not yet pulled.
-- **Response**: Always `{ ads: [...], notifications: [...] }` in array format. Use directly in extension code.
+- **Bearer token**: From login/register; identifies the row in **`end_users`**.
+- **Response**: Always `{ ads: [...], notifications: [...] }`.
 
 ### How notifications work (on extension load)
 
-- **Backend**: Stores global notifications (title, message, date range). Tracks which user has already pulled which notification (`notification_reads`).
-- **Extension**: On extension load, call `POST /api/extension/ad-block` with `{ visitorId, requestType: "notification" }` to get notifications only. No domain needed. Returns `{ ads: [], notifications: [...] }`. Use the `notifications` array to show banners/toasts. **Do not pull or show notifications when the user is on the dashboard** — admins should not see notification banners.
+- **Extension**: `POST /api/extension/ad-block` with **`Authorization: Bearer`** and `{ "requestType": "notification" }`. **Do not pull when the user is on the admin dashboard** (avoid banners for staff).
 
 ### Reducing requests (short list)
 
