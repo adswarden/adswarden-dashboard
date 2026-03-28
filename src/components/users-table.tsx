@@ -7,6 +7,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { EndUserRowActions } from '@/components/end-user-row-actions';
+import { HumanReadableDate } from '@/components/human-readable-date';
 import { UserIdentityCell } from '@/components/user-identity-cell';
 import type { EndUserListRow } from '@/lib/end-users-dashboard';
 import { computeExtensionDaysLeft, formatExtensionDaysLeftCell } from '@/lib/extension-user-subscription';
@@ -27,7 +28,7 @@ export function UsersTable({ rows }: UsersTableProps) {
             <TableHead className="min-w-[72px]">Plan</TableHead>
             <TableHead className="min-w-[88px]">Status</TableHead>
             <TableHead className="w-[88px]">Country</TableHead>
-            <TableHead className="text-right w-[96px] tabular-nums">Impressions</TableHead>
+            <TableHead className="text-right w-[96px] tabular-nums pr-8">Impressions</TableHead>
             <TableHead className="min-w-[140px]">Start date</TableHead>
             <TableHead className="min-w-[140px]">End date</TableHead>
             <TableHead className="min-w-[140px]">Last session</TableHead>
@@ -66,15 +67,23 @@ export function UsersTable({ rows }: UsersTableProps) {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-sm">{v.impressionCount}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {new Date(v.startDate).toLocaleString()}
+                  <TableCell className="text-right tabular-nums text-sm pr-8">{v.impressionCount}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    <HumanReadableDate date={new Date(v.startDate)} />
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {v.endDate ? new Date(v.endDate).toLocaleString() : '—'}
+                  <TableCell className="text-sm text-muted-foreground">
+                    {v.endDate ? (
+                      <HumanReadableDate date={new Date(v.endDate)} />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                    {v.lastSessionAt ? new Date(v.lastSessionAt).toLocaleString() : '—'}
+                  <TableCell className="text-sm text-muted-foreground">
+                    {v.lastSessionAt ? (
+                      <HumanReadableDate date={new Date(v.lastSessionAt)} />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-center tabular-nums text-sm">{daysLeft}</TableCell>
                   <TableCell className="text-right">
