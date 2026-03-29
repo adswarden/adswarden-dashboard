@@ -56,7 +56,7 @@ export type ExtensionLiveCampaignUpdatePayload = {
   campaign: ExtensionLiveCampaignPayload | null;
 };
 
-type CampaignSelectRow = {
+export type CampaignSelectRow = {
   id: string;
   name: string;
   targetAudience: string;
@@ -101,7 +101,7 @@ function serializeCampaignBase(c: CampaignSelectRow): Omit<
   };
 }
 
-async function hydrateCampaignPayloads(
+export async function hydrateCampaignPayloads(
   rows: CampaignSelectRow[]
 ): Promise<ExtensionLiveCampaignPayload[]> {
   const adIds = new Set<string>();
@@ -212,7 +212,7 @@ async function hydrateCampaignPayloads(
   });
 }
 
-const campaignSelectShape = {
+export const extensionCampaignSelectShape = {
   id: campaigns.id,
   name: campaigns.name,
   targetAudience: campaigns.targetAudience,
@@ -230,6 +230,23 @@ const campaignSelectShape = {
   platformIds: campaigns.platformIds,
   countryCodes: campaigns.countryCodes,
 } as const;
+
+/** Active campaigns whose schedule window includes `now` (status + start/end dates). */
+export async function fetchActiveCampaignRowsForExtension(
+  now: Date = new Date()
+): Promise<CampaignSelectRow[]> {
+  const campaignRows = await db
+    .select(extensionCampaignSelectShape)
+    .from(campaigns)
+    .where(
+      and(
+        eq(campaigns.status, 'active'),
+        or(isNull(campaigns.startDate), lte(campaigns.startDate, now)),
+        or(isNull(campaigns.endDate), gte(campaigns.endDate, now))
+      )
+    );
+  return campaignRows as CampaignSelectRow[];
+}
 
 export async function buildExtensionLiveInit(endUser: EndUserRow | null): Promise<ExtensionLiveInitPayload> {
   const platformRows = await db.select({ domain: platforms.domain }).from(platforms);
@@ -249,18 +266,9 @@ export async function buildExtensionLiveInit(endUser: EndUserRow | null): Promis
   }
 
   const now = new Date();
-  const campaignRows = await db
-    .select(campaignSelectShape)
-    .from(campaigns)
-    .where(
-      and(
-        eq(campaigns.status, 'active'),
-        or(isNull(campaigns.startDate), lte(campaigns.startDate, now)),
-        or(isNull(campaigns.endDate), gte(campaigns.endDate, now))
-      )
-    );
+  const campaignRows = await fetchActiveCampaignRowsForExtension(now);
 
-  const rowsTyped = campaignRows as CampaignSelectRow[];
+  const rowsTyped = campaignRows;
   const out = await hydrateCampaignPayloads(rowsTyped);
 
   const frequencyCounts = await fetchFrequencyCountsForEndUser(String(endUser.id), rowsTyped.map((c) => c.id));
@@ -320,7 +328,7 @@ export async function buildCampaignUpdateForExtension(
   campaignId: string
 ): Promise<ExtensionLiveCampaignUpdatePayload> {
   const [c] = await db
-    .select(campaignSelectShape)
+    .select(extensionCampaignSelectShape)
     .from(campaigns)
     .where(eq(campaigns.id, campaignId))
     .limit(1);

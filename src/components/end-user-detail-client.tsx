@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { DateTimePicker } from "@/components/ui/date-time-picker"
@@ -15,10 +16,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import { PaymentsTable } from "@/components/payments-table"
 import { AddPaymentDialog } from "@/components/add-payment-dialog"
 import { AdminEndUserSessionsCard } from "@/components/admin-end-user-sessions-card"
 import { EndUserAnalyticsSection } from "@/components/end-user-analytics-section"
+import { EndUserEventsTimeline } from "@/components/end-user-events-timeline"
+import { EndUserDashboardKpis } from "@/components/end-user-dashboard-kpis"
+import type { EndUserDashboardSnapshot } from "@/lib/end-user-dashboard-types"
 import { IconLoader2 } from "@tabler/icons-react"
 import { toast } from "sonner"
 import type { PaymentRow } from "@/db/schema"
@@ -27,15 +32,15 @@ import { isoOrDateToLocalDatetimeValue, localDatetimeToIso } from "@/lib/datetim
 export type EndUserDetailInitialUser = {
   id: string
   email: string | null
-  shortId: string
-  installationId: string | null
+  identifier: string | null
   name: string | null
   plan: string
-  status: string
+  banned: boolean
   country: string | null
   startDate: string
   endDate: string | null
   createdAt: string
+  updatedAt: string
 }
 
 export type EndUserPaymentListItem = {
@@ -52,26 +57,25 @@ export type EndUserPaymentListItem = {
 export type EndUserApiRow = {
   id: string
   email: string | null
-  shortId: string
-  installationId: string | null
+  identifier: string | null
   name: string | null
   plan: string
-  status: string
+  banned: boolean
   country: string | null
   startDate: Date | string
   endDate: Date | string | null
   createdAt: Date | string
+  updatedAt: Date | string
 }
 
 function mapApiUserToInitial(u: EndUserApiRow): EndUserDetailInitialUser {
   return {
     id: String(u.id),
     email: u.email,
-    shortId: u.shortId,
-    installationId: u.installationId,
+    identifier: u.identifier,
     name: u.name,
     plan: String(u.plan),
-    status: String(u.status),
+    banned: Boolean(u.banned),
     country: u.country,
     startDate:
       typeof u.startDate === "string" ? u.startDate : new Date(u.startDate).toISOString(),
@@ -82,6 +86,8 @@ function mapApiUserToInitial(u: EndUserApiRow): EndUserDetailInitialUser {
       : null,
     createdAt:
       typeof u.createdAt === "string" ? u.createdAt : new Date(u.createdAt).toISOString(),
+    updatedAt:
+      typeof u.updatedAt === "string" ? u.updatedAt : new Date(u.updatedAt).toISOString(),
   }
 }
 
@@ -101,10 +107,30 @@ function paymentsToRows(items: EndUserPaymentListItem[]): PaymentRow[] {
 interface EndUserDetailClientProps {
   initialUser: EndUserDetailInitialUser
   initialPayments: EndUserPaymentListItem[]
+  initialDashboard: EndUserDashboardSnapshot
 }
 
-export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDetailClientProps) {
+export function EndUserDetailClient({
+  initialUser,
+  initialPayments,
+  initialDashboard,
+}: EndUserDetailClientProps) {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const isEditing = searchParams.get("edit") === "1"
+
+  const setEditMode = useCallback(
+    (on: boolean) => {
+      const p = new URLSearchParams(searchParams.toString())
+      if (on) p.set("edit", "1")
+      else p.delete("edit")
+      const q = p.toString()
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false })
+    },
+    [pathname, router, searchParams],
+  )
+
   const [user, setUser] = useState(initialUser)
   const [payments, setPayments] = useState(initialPayments)
   const [saving, setSaving] = useState(false)
@@ -113,7 +139,7 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
   const [name, setName] = useState(user.name ?? "")
   const [email, setEmail] = useState(user.email ?? "")
   const [plan, setPlan] = useState(user.plan)
-  const [status, setStatus] = useState(user.status)
+  const [banned, setBanned] = useState(user.banned)
   const [country, setCountry] = useState(user.country ?? "")
   const [startDate, setStartDate] = useState(() => isoOrDateToLocalDatetimeValue(user.startDate))
   const [endDate, setEndDate] = useState(() => isoOrDateToLocalDatetimeValue(user.endDate))
@@ -121,12 +147,22 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
 
   const paymentsForTable = useMemo(() => paymentsToRows(payments), [payments])
 
+  const pageTitle = useMemo(
+    () =>
+      user.name?.trim() ||
+      user.email ||
+      user.identifier ||
+      (user.id.length > 8 ? `${user.id.slice(0, 8)}…` : user.id) ||
+      "Extension user",
+    [user.email, user.name, user.identifier, user.id],
+  )
+
   useEffect(() => {
     setUser(initialUser)
     setName(initialUser.name ?? "")
     setEmail(initialUser.email ?? "")
     setPlan(initialUser.plan)
-    setStatus(initialUser.status)
+    setBanned(initialUser.banned)
     setCountry(initialUser.country ?? "")
     setStartDate(isoOrDateToLocalDatetimeValue(initialUser.startDate))
     setEndDate(isoOrDateToLocalDatetimeValue(initialUser.endDate))
@@ -154,6 +190,7 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
       const next = mapApiUserToInitial(u)
       setUser(next)
       setEmail(next.email ?? "")
+      setBanned(next.banned)
       setStartDate(isoOrDateToLocalDatetimeValue(next.startDate))
       setEndDate(isoOrDateToLocalDatetimeValue(next.endDate))
     }
@@ -179,8 +216,8 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
       }
 
       const emailTrim = email.trim().toLowerCase()
-      if (emailTrim === "" && !user.installationId) {
-        toast.error("Email is required unless this user has an installation id (anonymous).")
+      if (emailTrim === "" && !user.identifier) {
+        toast.error("Email is required unless this user has an identifier (anonymous).")
         setSaving(false)
         return
       }
@@ -189,7 +226,7 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
         name: name.trim() || null,
         email: emailTrim === "" ? null : emailTrim,
         plan,
-        status,
+        banned,
         country: countryTrim === "" ? null : countryTrim.toUpperCase(),
         startDate: startIso,
         endDate: endDate.trim() ? localDatetimeToIso(endDate) : null,
@@ -218,10 +255,12 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
       const next = mapApiUserToInitial(data.user)
       setUser(next)
       setEmail(next.email ?? "")
+      setBanned(next.banned)
       setStartDate(isoOrDateToLocalDatetimeValue(next.startDate))
       setEndDate(isoOrDateToLocalDatetimeValue(next.endDate))
       setNewPassword("")
       toast.success("Saved")
+      setEditMode(false)
       router.refresh()
     } finally {
       setSaving(false)
@@ -247,78 +286,251 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
     }
   }
 
+  const idPreview =
+    user.id.length > 12 ? `${user.id.slice(0, 8)}…${user.id.slice(-4)}` : user.id
+
+  const overviewStart = useMemo(
+    () => new Date(user.startDate).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+    [user.startDate],
+  )
+  const overviewEnd = useMemo(
+    () =>
+      user.endDate
+        ? new Date(user.endDate).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+        : null,
+    [user.endDate],
+  )
+  const overviewCreated = useMemo(
+    () => new Date(user.createdAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+    [user.createdAt],
+  )
+  const overviewUpdated = useMemo(
+    () => new Date(user.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+    [user.updatedAt],
+  )
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button variant="outline" size="sm" asChild>
           <Link href="/users">← Back to users</Link>
         </Button>
-        <Button
-          type="button"
-          variant="destructive"
-          size="sm"
-          disabled={deleting}
-          onClick={onDeleteUser}
-        >
-          {deleting ? "Deleting…" : "Delete user"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {isEditing ? (
+            <Button type="button" variant="secondary" size="sm" onClick={() => setEditMode(false)}>
+              Done
+            </Button>
+          ) : (
+            <Button type="button" size="sm" onClick={() => setEditMode(true)}>
+              Edit user
+            </Button>
+          )}
+        </div>
       </div>
 
+      <header className="space-y-2">
+        <h1 className="min-w-0 break-words text-2xl font-semibold tracking-tight text-pretty">
+          {pageTitle}
+        </h1>
+        <p className="max-w-3xl text-sm leading-relaxed text-muted-foreground text-pretty">
+          User id <span className="font-mono text-foreground">{idPreview}</span>
+          {user.identifier ? (
+            <>
+              {" "}
+              · Identifier{" "}
+              <span className="font-mono text-foreground">{user.identifier}</span>
+            </>
+          ) : null}
+          .{isEditing ? " Change fields below and save; charts and timeline are hidden while editing." : " Overview shows access and telemetry; edit to change profile, plan, or password."}
+        </p>
+      </header>
+
+      {!isEditing ? (
+        <EndUserDashboardKpis
+          dashboard={initialDashboard}
+          recordUpdatedAt={user.updatedAt}
+          className="space-y-4"
+        />
+      ) : null}
+
+      {!isEditing ? (
+        <Card className="overflow-hidden">
+          <CardHeader className="border-b border-border pb-6">
+            <CardTitle className="text-lg">Profile and access</CardTitle>
+            <CardDescription>Read-only summary. Use Edit user to change these fields.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <dl className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1 sm:col-span-2">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Identifier
+                </dt>
+                <dd className="break-words font-mono text-sm font-medium leading-snug">
+                  {user.identifier ?? "—"}
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Name
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug">{user.name?.trim() || "—"}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Email
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug">{user.email ?? "—"}</dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Plan
+                </dt>
+                <dd>
+                  <Badge variant="secondary" className="font-normal capitalize">
+                    {user.plan}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Banned
+                </dt>
+                <dd>
+                  <Badge variant={user.banned ? "destructive" : "secondary"} className="font-normal">
+                    {user.banned ? "Yes" : "No"}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Country
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug uppercase">
+                  {user.country ?? "—"}
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Account created
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug tabular-nums">
+                  {overviewCreated}
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Last updated
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug tabular-nums">
+                  {overviewUpdated}
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Access starts
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug tabular-nums">
+                  {overviewStart}
+                </dd>
+              </div>
+              <div className="space-y-1">
+                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Access ends
+                </dt>
+                <dd className="break-words text-sm font-medium leading-snug tabular-nums">
+                  {overviewEnd ?? "Open-ended"}
+                </dd>
+              </div>
+            </dl>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {!isEditing ? <EndUserAnalyticsSection endUserId={user.id} /> : null}
+
+      {!isEditing ? <EndUserEventsTimeline endUserId={user.id} /> : null}
+
+      {!isEditing ? <AdminEndUserSessionsCard userId={user.id} /> : null}
+
+      {!isEditing ? (
+        <Card>
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
+            <div>
+              <CardTitle>Payments</CardTitle>
+              <CardDescription>Manual payment records for this user.</CardDescription>
+            </div>
+            <AddPaymentDialog userId={user.id} onCreated={refreshPayments} />
+          </CardHeader>
+          <CardContent>
+            <PaymentsTable payments={paymentsForTable} onChanged={refreshPayments} />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {isEditing ? (
       <Card>
-        <CardHeader>
-          <CardTitle>Edit extension user</CardTitle>
-          <CardDescription>Update profile, subscription window, and password.</CardDescription>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:space-y-0">
+          <div>
+            <CardTitle>Edit extension user</CardTitle>
+            <CardDescription>Update profile, subscription window, and password.</CardDescription>
+          </div>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            disabled={deleting}
+            onClick={onDeleteUser}
+            className="shrink-0"
+          >
+            {deleting ? "Deleting…" : "Delete user"}
+          </Button>
         </CardHeader>
         <CardContent>
-          <form onSubmit={onSave} className="grid gap-4 max-w-xl">
+          <form onSubmit={onSave} className="grid w-full gap-4">
             <div className="grid gap-2">
-              <Label>Short ID</Label>
+              <Label htmlFor="end-user-identifier">Identifier</Label>
               <Input
+                id="end-user-identifier"
                 readOnly
-                value={user.shortId}
-                className="font-mono bg-muted/50"
+                value={user.identifier ?? ""}
+                placeholder="—"
+                className="font-mono bg-muted/50 text-sm"
                 aria-readonly
               />
+              <p className="text-xs text-muted-foreground">
+                Stable external id from the extension. Shown for support; UUID in the URL is the primary
+                key.
+              </p>
             </div>
-            {user.installationId ? (
-              <div className="grid gap-2">
-                <Label>Installation ID</Label>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="name">Name</Label>
                 <Input
-                  readOnly
-                  value={user.installationId}
-                  className="font-mono bg-muted/50 text-sm"
-                  aria-readonly
+                  id="name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={saving}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Anonymous extension install id. User can register later to attach an email.
-                </p>
               </div>
-            ) : null}
-            <div className="grid gap-2">
-              <Label htmlFor="name">Name</Label>
-              <Input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={saving}
-              />
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={saving}
+                  placeholder={
+                    user.identifier ? "Optional until user registers" : "you@example.com"
+                  }
+                />
+              </div>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={saving}
-                placeholder={user.installationId ? "Optional until user registers" : "you@example.com"}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label>Plan</Label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="end-user-plan">Plan</Label>
                 <Select value={plan} onValueChange={setPlan} disabled={saving}>
-                  <SelectTrigger>
+                  <SelectTrigger id="end-user-plan" className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -327,18 +539,23 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-2">
-                <Label>Status</Label>
-                <Select value={status} onValueChange={setStatus} disabled={saving}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="suspended">Suspended</SelectItem>
-                    <SelectItem value="churned">Churned</SelectItem>
-                  </SelectContent>
-                </Select>
+              <div className="flex flex-col gap-2 rounded-lg border border-border/80 p-4 sm:min-h-[72px] sm:justify-center">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="end-user-banned" className="text-base">
+                      Banned
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Banned users cannot use extension Bearer sessions.
+                    </p>
+                  </div>
+                  <Switch
+                    id="end-user-banned"
+                    checked={banned}
+                    onCheckedChange={setBanned}
+                    disabled={saving}
+                  />
+                </div>
               </div>
             </div>
             <div className="grid gap-2">
@@ -352,29 +569,31 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
                 disabled={saving}
               />
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="startDate">Start date</Label>
-              <DateTimePicker
-                id="startDate"
-                value={startDate}
-                onChange={setStartDate}
-                disabled={saving}
-                placeholder="Pick start date & time"
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="endDate">End date</Label>
-              <DateTimePicker
-                id="endDate"
-                value={endDate}
-                onChange={setEndDate}
-                disabled={saving}
-                allowClear
-                placeholder="Pick end date & time"
-              />
-              <p className="text-xs leading-relaxed text-foreground/70 dark:text-foreground/65">
-                Leave empty for open-ended access.
-              </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="startDate">Start date</Label>
+                <DateTimePicker
+                  id="startDate"
+                  value={startDate}
+                  onChange={setStartDate}
+                  disabled={saving}
+                  placeholder="Pick start date & time"
+                />
+              </div>
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor="endDate">End date</Label>
+                <DateTimePicker
+                  id="endDate"
+                  value={endDate}
+                  onChange={setEndDate}
+                  disabled={saving}
+                  allowClear
+                  placeholder="Pick end date & time"
+                />
+                <p className="text-xs leading-relaxed text-foreground/70 dark:text-foreground/65">
+                  Leave empty for open-ended access.
+                </p>
+              </div>
             </div>
             <div className="grid gap-2">
               <Label htmlFor="newPassword">New password (optional)</Label>
@@ -401,23 +620,7 @@ export function EndUserDetailClient({ initialUser, initialPayments }: EndUserDet
           </form>
         </CardContent>
       </Card>
-
-      <AdminEndUserSessionsCard userId={user.id} />
-
-      <EndUserAnalyticsSection endUserId={user.id} />
-
-      <Card>
-        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between space-y-0">
-          <div>
-            <CardTitle>Payments</CardTitle>
-            <CardDescription>Manual payment records for this user.</CardDescription>
-          </div>
-          <AddPaymentDialog userId={user.id} onCreated={refreshPayments} />
-        </CardHeader>
-        <CardContent>
-          <PaymentsTable payments={paymentsForTable} onChanged={refreshPayments} />
-        </CardContent>
-      </Card>
+      ) : null}
     </div>
   )
 }

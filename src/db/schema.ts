@@ -179,7 +179,6 @@ export const enduserEventTypeEnum = pgEnum('enduser_event_type', [
   'visit',
 ]);
 export const enduserPlanEnum = pgEnum('enduser_user_plan', ['trial', 'paid']);
-export const enduserStatusEnum = pgEnum('enduser_status', ['active', 'suspended', 'churned']);
 export const paymentStatusEnum = pgEnum('payment_status', [
   'pending',
   'completed',
@@ -187,18 +186,16 @@ export const paymentStatusEnum = pgEnum('payment_status', [
   'refunded',
 ]);
 
-/** Extension customers (distinct from Better Auth `user`). Anonymous rows use installationId + shortId; email/password optional until registration. */
+/** Extension customers (distinct from Better Auth `user`). Optional `identifier` for anonymous / device id; email/password optional until registration. */
 export const endUsers = pgTable('end_users', {
   id: uuid('id').primaryKey().defaultRandom(),
   email: varchar('email', { length: 255 }).unique(),
   passwordHash: varchar('password_hash', { length: 255 }),
-  /** Stable id from extension chrome.storage (first install). */
-  installationId: varchar('installation_id', { length: 255 }).unique(),
-  /** Human-readable id for dashboard and support. */
-  shortId: varchar('short_id', { length: 12 }).notNull().unique(),
+  /** Stable external id (e.g. extension install key). Nullable; unique when set. */
+  identifier: varchar('identifier', { length: 255 }).unique(),
   name: varchar('name', { length: 255 }),
   plan: enduserPlanEnum('plan').notNull().default('trial'),
-  status: enduserStatusEnum('status').notNull().default('active'),
+  banned: boolean('banned').notNull().default(false),
   country: varchar('country', { length: 2 }),
   /** Account / access window start (replaces trial_started_at). */
   startDate: timestamp('start_date', { withTimezone: true }).notNull().defaultNow(),

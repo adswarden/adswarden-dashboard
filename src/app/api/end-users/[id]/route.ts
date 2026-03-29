@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic';
 const patchSchema = z.object({
   name: z.string().trim().max(255).nullable().optional(),
   email: z.string().trim().email().max(255).nullable().optional(),
-  installationId: z
+  identifier: z
     .string()
     .trim()
     .min(8)
@@ -20,7 +20,7 @@ const patchSchema = z.object({
     .nullable()
     .optional(),
   plan: z.enum(['trial', 'paid']).optional(),
-  status: z.enum(['active', 'suspended', 'churned']).optional(),
+  banned: z.boolean().optional(),
   country: z
     .string()
     .trim()
@@ -101,11 +101,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const p = parsed.data;
     const mergedEmail =
       p.email !== undefined ? (p.email === null ? null : p.email.toLowerCase()) : existing.email;
-    const mergedInstallationId =
-      p.installationId !== undefined ? p.installationId : existing.installationId;
-    if (mergedEmail == null && mergedInstallationId == null) {
+    const mergedIdentifier =
+      p.identifier !== undefined ? p.identifier : existing.identifier;
+    if (mergedEmail == null && mergedIdentifier == null) {
       return NextResponse.json(
-        { error: 'User must have either email or installationId' },
+        { error: 'User must have either email or identifier' },
         { status: 400 }
       );
     }
@@ -116,11 +116,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (p.email !== undefined) {
       updates.email = p.email === null ? null : p.email.toLowerCase();
     }
-    if (p.installationId !== undefined) {
-      updates.installationId = p.installationId;
+    if (p.identifier !== undefined) {
+      updates.identifier = p.identifier;
     }
     if (p.plan !== undefined) updates.plan = p.plan;
-    if (p.status !== undefined) updates.status = p.status;
+    if (p.banned !== undefined) updates.banned = p.banned;
 
     if (p.country !== undefined) {
       updates.country = p.country === null ? null : p.country.toUpperCase();
@@ -149,7 +149,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : String(error);
     if (msg.includes('unique') || msg.includes('duplicate')) {
-      return NextResponse.json({ error: 'Email already in use' }, { status: 409 });
+      return NextResponse.json({ error: 'Email or identifier already in use' }, { status: 409 });
     }
     console.error('[api/end-users/[id] PATCH]', error);
     return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });

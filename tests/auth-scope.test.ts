@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SessionWithRole } from '@/lib/dal';
 import { endEventsOwnedCampaignJoin, endEventsRequiresCampaignOwnerJoin } from '@/lib/events-dashboard';
 
 const dbMocks = vi.hoisted(() => ({
@@ -49,7 +50,7 @@ describe('getAccessibleCampaignById', () => {
     const session = {
       user: { id: 'user-a' },
       role: 'user' as const,
-    };
+    } as NonNullable<SessionWithRole>;
 
     const result = await getAccessibleCampaignById(session, row.id);
     expect(result).toEqual(row);
@@ -61,7 +62,7 @@ describe('getAccessibleCampaignById', () => {
     const session = {
       user: { id: 'user-a' },
       role: 'user' as const,
-    };
+    } as NonNullable<SessionWithRole>;
 
     const result = await getAccessibleCampaignById(
       session,
@@ -81,7 +82,7 @@ describe('getAccessibleCampaignById', () => {
     const session = {
       user: { id: 'admin-user' },
       role: 'admin' as const,
-    };
+    } as NonNullable<SessionWithRole>;
 
     const result = await getAccessibleCampaignById(session, row.id);
     expect(result).toEqual(row);

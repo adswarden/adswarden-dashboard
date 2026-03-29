@@ -13,6 +13,8 @@ export type EventsDashboardFilters = {
   domain?: string;
   country?: string;
   endUserId?: string;
+  /** Exact match on `enduser_events.enduser_id` (e.g. end-user UUID). Takes precedence over `endUserId` substring. */
+  endUserIdExact?: string;
   email?: string;
   campaignId?: string;
 };
@@ -84,7 +86,10 @@ function buildFilterConditions(filters: EventsDashboardFilters): SQL[] {
     const cc = filters.country.toLowerCase();
     conditions.push(sql`lower(coalesce(${enduserEvents.country}, '')) = ${cc}`);
   }
-  if (filters.endUserId?.trim()) {
+  const exactEnd = filters.endUserIdExact?.trim();
+  if (exactEnd && UUID_RE.test(exactEnd)) {
+    conditions.push(eq(enduserEvents.endUserId, exactEnd));
+  } else if (filters.endUserId?.trim()) {
     const esc = escapeIlikePattern(filters.endUserId.trim());
     conditions.push(ilike(enduserEvents.endUserId, `%${esc}%`));
   }

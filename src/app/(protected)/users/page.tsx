@@ -40,7 +40,7 @@ type SearchParams = Promise<{
   lastSeenTo?: string;
   country?: string;
   plan?: string;
-  status?: string;
+  banned?: string;
   page?: string;
 }>;
 
@@ -93,7 +93,8 @@ export default async function UsersPage({
   if (filters.lastSeenTo) filterParams.lastSeenTo = filters.lastSeenTo;
   if (filters.country) filterParams.country = filters.country;
   if (filters.plan) filterParams.plan = filters.plan;
-  if (filters.status) filterParams.status = filters.status;
+  if (filters.banned === true) filterParams.banned = 'true';
+  if (filters.banned === false) filterParams.banned = 'false';
 
   return (
     <UsersPageLayout
@@ -106,7 +107,7 @@ export default async function UsersPage({
           lastSeenTo={filters.lastSeenTo}
           country={filters.country}
           plan={filters.plan}
-          status={filters.status}
+          banned={filters.banned}
           countryOptions={countryOptions}
         />
       }

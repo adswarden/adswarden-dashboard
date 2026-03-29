@@ -219,7 +219,7 @@ export function EventsFilters({
                 id="events-enduser"
                 name="endUserId"
                 type="text"
-                placeholder="Partial installation id"
+                placeholder="Partial user id (UUID)"
                 value={endUserIdValue}
                 onChange={(e) => setEndUserIdValue(e.target.value)}
                 className="w-full text-sm font-mono"

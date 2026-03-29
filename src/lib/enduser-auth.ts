@@ -10,8 +10,6 @@ import type { EndUserRow, EnduserSessionRow } from '@/db/schema';
 
 const BCRYPT_ROUNDS = 10;
 
-const SHORT_ID_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
-
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   if (raw === undefined || raw === '') return fallback;
   const n = parseInt(raw, 10);
@@ -29,30 +27,6 @@ export function hashEnduserPassword(plain: string): string {
 
 export function verifyEnduserPassword(plain: string, passwordHash: string): boolean {
   return bcrypt.compareSync(plain, passwordHash);
-}
-
-/** Random short id for dashboard display (check uniqueness with allocateUniqueShortId). */
-export function generateShortId(): string {
-  const bytes = randomBytes(8);
-  let out = '';
-  for (let i = 0; i < 8; i++) {
-    out += SHORT_ID_CHARS[bytes[i]! % SHORT_ID_CHARS.length];
-  }
-  return out;
-}
-
-/** Resolves to a shortId not yet present in end_users (collision retry). */
-export async function allocateUniqueShortId(): Promise<string> {
-  for (let attempt = 0; attempt < 32; attempt++) {
-    const candidate = generateShortId();
-    const row = await db
-      .select({ id: endUsers.id })
-      .from(endUsers)
-      .where(eq(endUsers.shortId, candidate))
-      .limit(1);
-    if (!row.length) return candidate;
-  }
-  throw new Error('Failed to allocate unique short_id');
 }
 
 /** URL-safe random token for Bearer auth. */
@@ -87,7 +61,13 @@ export async function resolveEndUserFromToken(
     })
     .from(enduserSessions)
     .innerJoin(endUsers, eq(endUsers.id, enduserSessions.endUserId))
-    .where(and(eq(enduserSessions.token, token), gt(enduserSessions.expiresAt, now)))
+    .where(
+      and(
+        eq(enduserSessions.token, token),
+        gt(enduserSessions.expiresAt, now),
+        eq(endUsers.banned, false)
+      )
+    )
     .limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -138,14 +118,14 @@ export function endUserPublicPayload(user: EndUserRow) {
   return {
     id: user.id,
     email: user.email,
-    shortId: user.shortId,
-    installationId: user.installationId,
+    identifier: user.identifier,
     name: user.name,
     plan: user.plan,
-    status: user.status,
+    banned: user.banned,
     country: user.country,
     startDate: user.startDate,
     endDate: user.endDate,
     createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
   };
 }

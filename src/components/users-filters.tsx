@@ -19,7 +19,13 @@ import { IconFilter } from "@tabler/icons-react"
 
 const ALL_COUNTRIES_VALUE = "__all__"
 const ALL_PLANS_VALUE = "__all_plans__"
-const ALL_STATUS_VALUE = "__all_status__"
+const ALL_BANNED_VALUE = "__all_banned__"
+
+function bannedToSelectValue(banned: boolean | undefined): string {
+  if (banned === true) return "true"
+  if (banned === false) return "false"
+  return ALL_BANNED_VALUE
+}
 
 interface UsersFiltersProps {
   q?: string
@@ -29,7 +35,7 @@ interface UsersFiltersProps {
   lastSeenTo?: string
   country?: string
   plan?: "trial" | "paid"
-  status?: "active" | "suspended" | "churned"
+  banned?: boolean
   countryOptions: { code: string; name: string }[]
 }
 
@@ -41,7 +47,7 @@ export function UsersFilters({
   lastSeenTo,
   country,
   plan,
-  status,
+  banned,
   countryOptions,
 }: UsersFiltersProps) {
   const router = useRouter()
@@ -49,7 +55,7 @@ export function UsersFilters({
   const closeFilterPanel = useCloseFilterPanel()
   const [countryValue, setCountryValue] = useState(country ?? ALL_COUNTRIES_VALUE)
   const [planValue, setPlanValue] = useState(plan ?? ALL_PLANS_VALUE)
-  const [statusValue, setStatusValue] = useState(status ?? ALL_STATUS_VALUE)
+  const [bannedValue, setBannedValue] = useState(bannedToSelectValue(banned))
   const [qValue, setQValue] = useState(q ?? "")
   const [joinedFromValue, setJoinedFromValue] = useState(joinedFrom ?? "")
   const [joinedToValue, setJoinedToValue] = useState(joinedTo ?? "")
@@ -65,8 +71,8 @@ export function UsersFilters({
   }, [plan])
 
   useEffect(() => {
-    queueMicrotask(() => setStatusValue(status ?? ALL_STATUS_VALUE))
-  }, [status])
+    queueMicrotask(() => setBannedValue(bannedToSelectValue(banned)))
+  }, [banned])
 
   useEffect(() => {
     queueMicrotask(() => setQValue(q ?? ""))
@@ -113,10 +119,8 @@ export function UsersFilters({
         planValue === "trial" || planValue === "paid"
           ? planValue
           : undefined,
-      status:
-        statusValue === "active" || statusValue === "suspended" || statusValue === "churned"
-          ? statusValue
-          : undefined,
+      banned:
+        bannedValue === "true" || bannedValue === "false" ? bannedValue : undefined,
     })
   }
 
@@ -128,7 +132,7 @@ export function UsersFilters({
     setLastSeenToValue("")
     setCountryValue(ALL_COUNTRIES_VALUE)
     setPlanValue(ALL_PLANS_VALUE)
-    setStatusValue(ALL_STATUS_VALUE)
+    setBannedValue(ALL_BANNED_VALUE)
     router.push("/users")
     closeFilterPanel?.()
   }
@@ -141,7 +145,7 @@ export function UsersFilters({
           Filters
         </CardTitle>
         <CardDescription>
-          Search by UUID, short ID, email, name, or installation id — or narrow by date, country, and plan.
+          Search by UUID, identifier, email, or name — or narrow by date, country, plan, and banned state.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -152,7 +156,7 @@ export function UsersFilters({
               id="q"
               name="q"
               type="text"
-              placeholder="Email, short ID, UUID, name, or installation id (partial match)"
+              placeholder="Email, identifier, UUID, or name (partial match)"
               value={qValue}
               onChange={(e) => setQValue(e.target.value)}
               className="w-full font-mono text-sm"
@@ -251,16 +255,15 @@ export function UsersFilters({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="status">Status</Label>
-                <Select value={statusValue} onValueChange={setStatusValue}>
-                  <SelectTrigger id="status" className="w-full">
-                    <SelectValue placeholder="All statuses" />
+                <Label htmlFor="banned">Banned</Label>
+                <Select value={bannedValue} onValueChange={setBannedValue}>
+                  <SelectTrigger id="banned" className="w-full">
+                    <SelectValue placeholder="All users" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={ALL_STATUS_VALUE}>All statuses</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="suspended">Suspended</SelectItem>
-                    <SelectItem value="churned">Churned</SelectItem>
+                    <SelectItem value={ALL_BANNED_VALUE}>All users</SelectItem>
+                    <SelectItem value="false">Not banned</SelectItem>
+                    <SelectItem value="true">Banned</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

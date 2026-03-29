@@ -21,6 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { IconLoader2, IconUserPlus } from '@tabler/icons-react';
 import { toast } from 'sonner';
 
@@ -30,37 +31,37 @@ export function AddEndUserDialog() {
   const [submitting, setSubmitting] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [installationId, setInstallationId] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [name, setName] = useState('');
   const [plan, setPlan] = useState<'trial' | 'paid'>('trial');
-  const [status, setStatus] = useState<'active' | 'suspended' | 'churned'>('active');
+  const [banned, setBanned] = useState(false);
 
   const reset = () => {
     setEmail('');
     setPassword('');
-    setInstallationId('');
+    setIdentifier('');
     setName('');
     setPlan('trial');
-    setStatus('active');
+    setBanned(false);
   };
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const em = email.trim().toLowerCase();
-    const inst = installationId.trim();
+    const idRaw = identifier.trim();
     const hasEmail = em.length > 0;
-    const hasInst = inst.length > 0;
+    const hasIdentifier = idRaw.length > 0;
 
-    if (!hasEmail && !hasInst) {
-      toast.error('Provide email (with password) or an installation id for an anonymous user.');
+    if (!hasEmail && !hasIdentifier) {
+      toast.error('Provide email (with password) or an identifier for an anonymous user.');
       return;
     }
     if (hasEmail && password.length < 8) {
       toast.error('Password must be at least 8 characters when email is set.');
       return;
     }
-    if (hasInst && inst.length < 8) {
-      toast.error('Installation id must be at least 8 characters (alphanumeric, _ or -).');
+    if (hasIdentifier && idRaw.length < 8) {
+      toast.error('Identifier must be at least 8 characters (alphanumeric, _ or -).');
       return;
     }
 
@@ -69,14 +70,14 @@ export function AddEndUserDialog() {
       const body: Record<string, unknown> = {
         name: name.trim() || null,
         plan,
-        status,
+        banned,
       };
       if (hasEmail) {
         body.email = em;
         body.password = password;
-        if (hasInst) body.installationId = inst;
+        if (hasIdentifier) body.identifier = idRaw;
       } else {
-        body.installationId = inst;
+        body.identifier = idRaw;
       }
 
       const res = await fetch('/api/end-users', {
@@ -116,9 +117,8 @@ export function AddEndUserDialog() {
         <DialogHeader>
           <DialogTitle>Add extension user</DialogTitle>
           <DialogDescription>
-            Create a registered user (email + password) or an anonymous trial user (installation id from
-            the extension). See <code className="text-xs">POST /api/extension/auth/provision</code> for
-            the client flow.
+            Create a registered user (email + password) or an anonymous trial user (identifier from the
+            extension).
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={onSubmit} className="grid gap-4">
@@ -148,11 +148,11 @@ export function AddEndUserDialog() {
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="add-installation-id">Installation id (anonymous user)</Label>
+            <Label htmlFor="add-identifier">Identifier (anonymous user)</Label>
             <Input
-              id="add-installation-id"
-              value={installationId}
-              onChange={(e) => setInstallationId(e.target.value)}
+              id="add-identifier"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               disabled={submitting}
               placeholder="From extension storage, 8+ chars, a-z A-Z 0-9 _ -"
               className="font-mono text-sm"
@@ -184,22 +184,18 @@ export function AddEndUserDialog() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
-              <Label>Status</Label>
-              <Select
-                value={status}
-                onValueChange={(v) => setStatus(v as 'active' | 'suspended' | 'churned')}
-                disabled={submitting}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="suspended">Suspended</SelectItem>
-                  <SelectItem value="churned">Churned</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="flex flex-col justify-center gap-2 rounded-lg border border-border/80 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="add-banned" className="cursor-pointer">
+                  Banned
+                </Label>
+                <Switch
+                  id="add-banned"
+                  checked={banned}
+                  onCheckedChange={setBanned}
+                  disabled={submitting}
+                />
+              </div>
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">

@@ -18,7 +18,8 @@ export type EndUsersDashboardFilters = {
   lastSeenTo?: string;
   country?: string;
   plan?: 'trial' | 'paid';
-  status?: 'active' | 'suspended' | 'churned';
+  /** When set, filter to `banned = true` or `banned = false`. */
+  banned?: boolean;
 };
 
 export function parseEndUsersDashboardFilters(
@@ -29,11 +30,10 @@ export function parseEndUsersDashboardFilters(
   const planRaw = getQueryParam(sp, 'plan')?.toLowerCase();
   const plan =
     planRaw === 'trial' || planRaw === 'paid' ? (planRaw as 'trial' | 'paid') : undefined;
-  const statusRaw = getQueryParam(sp, 'status')?.toLowerCase();
-  const status =
-    statusRaw === 'active' || statusRaw === 'suspended' || statusRaw === 'churned'
-      ? (statusRaw as 'active' | 'suspended' | 'churned')
-      : undefined;
+  const bannedRaw = getQueryParam(sp, 'banned')?.toLowerCase();
+  let banned: boolean | undefined;
+  if (bannedRaw === 'true' || bannedRaw === '1') banned = true;
+  else if (bannedRaw === 'false' || bannedRaw === '0') banned = false;
   return {
     q: q ?? endUserId,
     email: getQueryParam(sp, 'email'),
@@ -43,7 +43,7 @@ export function parseEndUsersDashboardFilters(
     lastSeenTo: getQueryParam(sp, 'lastSeenTo'),
     country: getQueryParam(sp, 'country'),
     plan,
-    status,
+    banned,
   };
 }
 
@@ -74,8 +74,7 @@ function buildEndUsersWhereConditions(filters: EndUsersDashboardFilters): SQL[] 
     conditions.push(
       or(
         ilike(endUsers.email, pattern),
-        ilike(endUsers.shortId, pattern),
-        ilike(endUsers.installationId, pattern),
+        ilike(sql`coalesce(${endUsers.identifier}, '')`, pattern),
         ilike(sql`cast(${endUsers.id} as text)`, pattern),
         ilike(endUsers.name, pattern)
       )!
@@ -117,8 +116,8 @@ function buildEndUsersWhereConditions(filters: EndUsersDashboardFilters): SQL[] 
     conditions.push(eq(endUsers.plan, filters.plan));
   }
 
-  if (filters.status) {
-    conditions.push(eq(endUsers.status, filters.status));
+  if (filters.banned !== undefined) {
+    conditions.push(eq(endUsers.banned, filters.banned));
   }
 
   return conditions;
@@ -216,24 +215,24 @@ export function usersFilterChips(
       label: 'Plan',
       display: filters.plan === 'paid' ? 'Paid' : 'Trial',
     });
-  if (filters.status)
+  if (filters.banned !== undefined) {
     chips.push({
-      id: 'status',
-      urlKeys: ['status'],
-      label: 'Status',
-      display: filters.status.charAt(0).toUpperCase() + filters.status.slice(1),
+      id: 'banned',
+      urlKeys: ['banned'],
+      label: 'Banned',
+      display: filters.banned ? 'Yes' : 'No',
     });
+  }
   return chips;
 }
 
 export type EndUserListRow = {
   id: string;
   email: string | null;
-  shortId: string;
-  installationId: string | null;
+  identifier: string | null;
   name: string | null;
   plan: string;
-  status: string;
+  banned: boolean;
   country: string | null;
   startDate: Date;
   endDate: Date | null;
@@ -255,11 +254,10 @@ export function buildEndUsersListBaseQuery(
     .select({
       id: sql<string>`${endUsers.id}::text`.as('id'),
       email: endUsers.email,
-      shortId: endUsers.shortId,
-      installationId: endUsers.installationId,
+      identifier: endUsers.identifier,
       name: endUsers.name,
       plan: endUsers.plan,
-      status: endUsers.status,
+      banned: endUsers.banned,
       country: endUsers.country,
       startDate: endUsers.startDate,
       endDate: endUsers.endDate,
@@ -331,13 +329,12 @@ export async function countEndUsersListQuery(
 export function endUsersToCsvLines(rows: EndUserListRow[]): string[] {
   const header = [
     'UUID',
-    'Short ID',
-    'Installation ID',
+    'Identifier',
     'Email',
     'Name',
     'Impressions',
     'Plan',
-    'Status',
+    'Banned',
     'Country',
     'Days left',
     'Start date',
@@ -350,13 +347,12 @@ export function endUsersToCsvLines(rows: EndUserListRow[]): string[] {
     const daysLeft = formatExtensionDaysLeftCell(computeExtensionDaysLeft({ endDate: row.endDate }));
     const cells: string[] = [
       row.id,
-      row.shortId,
-      row.installationId ?? '',
+      row.identifier ?? '',
       row.email ?? '',
       row.name ?? '',
       String(row.impressionCount),
       row.plan,
-      row.status,
+      row.banned ? 'true' : 'false',
       row.country ?? '',
       daysLeft === '—' ? '' : daysLeft,
       new Date(row.startDate).toISOString(),

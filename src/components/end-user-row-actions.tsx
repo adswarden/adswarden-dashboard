@@ -20,11 +20,11 @@ import { toast } from 'sonner';
 interface EndUserRowActionsProps {
   userId: string;
   email: string | null;
-  shortId: string;
+  identifier: string | null;
 }
 
-export function EndUserRowActions({ userId, email, shortId }: EndUserRowActionsProps) {
-  const deleteLabel = email ?? shortId;
+export function EndUserRowActions({ userId, email, identifier }: EndUserRowActionsProps) {
+  const deleteLabel = email ?? identifier ?? userId.slice(0, 8);
   const router = useRouter();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);

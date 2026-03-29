@@ -3,6 +3,7 @@ import { desc, eq } from 'drizzle-orm';
 import { database as db } from '@/db';
 import { endUsers, payments } from '@/db/schema';
 import { getSessionWithRole } from '@/lib/dal';
+import { getEndUserDashboardSnapshot } from '@/lib/end-user-dashboard';
 import { endUserPublicPayload } from '@/lib/enduser-auth';
 import {
   EndUserDetailClient,
@@ -10,6 +11,7 @@ import {
   type EndUserPaymentListItem,
 } from '@/components/end-user-detail-client';
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,14 +27,14 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 
   const { id } = await params;
   const [user] = await db
-    .select({ name: endUsers.name, email: endUsers.email, shortId: endUsers.shortId })
+    .select({ name: endUsers.name, email: endUsers.email, identifier: endUsers.identifier })
     .from(endUsers)
     .where(eq(endUsers.id, id))
     .limit(1);
 
   if (!user) return { title: 'User' };
 
-  const label = user.name ?? user.email ?? user.shortId ?? 'User';
+  const label = user.name ?? user.email ?? user.identifier ?? 'User';
   return { title: label };
 }
 
@@ -48,21 +50,23 @@ export default async function EndUserDetailPage({
   const [user] = await db.select().from(endUsers).where(eq(endUsers.id, id)).limit(1);
   if (!user) notFound();
 
-  const paymentRows = await db
-    .select()
-    .from(payments)
-    .where(eq(payments.endUserId, id))
-    .orderBy(desc(payments.paymentDate), desc(payments.createdAt));
+  const [paymentRows, initialDashboard] = await Promise.all([
+    db
+      .select()
+      .from(payments)
+      .where(eq(payments.endUserId, id))
+      .orderBy(desc(payments.paymentDate), desc(payments.createdAt)),
+    getEndUserDashboardSnapshot(id),
+  ]);
 
   const raw = endUserPublicPayload(user);
   const initialUser: EndUserDetailInitialUser = {
     id: String(raw.id),
     email: raw.email,
-    shortId: raw.shortId,
-    installationId: raw.installationId,
+    identifier: raw.identifier,
     name: raw.name,
     plan: String(raw.plan),
-    status: String(raw.status),
+    banned: raw.banned,
     country: raw.country,
     startDate:
       raw.startDate instanceof Date ? raw.startDate.toISOString() : String(raw.startDate),
@@ -73,6 +77,8 @@ export default async function EndUserDetailPage({
       : null,
     createdAt:
       raw.createdAt instanceof Date ? raw.createdAt.toISOString() : String(raw.createdAt),
+    updatedAt:
+      raw.updatedAt instanceof Date ? raw.updatedAt.toISOString() : String(raw.updatedAt),
   };
 
   const initialPayments: EndUserPaymentListItem[] = paymentRows.map((p) => ({
@@ -87,8 +93,16 @@ export default async function EndUserDetailPage({
   }));
 
   return (
-    <div className="p-4 md:p-6 max-w-6xl">
-      <EndUserDetailClient initialUser={initialUser} initialPayments={initialPayments} />
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 p-4 md:p-6">
+      <Suspense
+        fallback={<div className="min-h-[320px] animate-pulse rounded-xl bg-muted/40" aria-hidden />}
+      >
+        <EndUserDetailClient
+          initialUser={initialUser}
+          initialPayments={initialPayments}
+          initialDashboard={initialDashboard}
+        />
+      </Suspense>
     </div>
   );
 }

@@ -8,6 +8,9 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
   XAxis,
   YAxis,
 } from "recharts"
@@ -22,6 +25,8 @@ import {
 } from "@/components/ui/card"
 import {
   ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
@@ -102,6 +107,14 @@ const timeSeriesConfig = {
   },
 } satisfies ChartConfig
 
+const PIE_COLORS = [
+  "var(--chart-1)",
+  "var(--chart-2)",
+  "var(--chart-3)",
+  "var(--chart-4)",
+  "var(--chart-5)",
+]
+
 function eventsDeepLink(endUserId: string, startIso: string, endIso: string): string {
   const from = startIso.slice(0, 10)
   const to = endIso.slice(0, 10)
@@ -174,6 +187,22 @@ export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyti
       .filter((r) => r.value > 0)
       .sort((a, b) => b.value - a.value)
   }, [data?.summary])
+
+  const pieChartConfig = useMemo(
+    () =>
+      Object.fromEntries(
+        mixRows.map((r, i) => [
+          r.label,
+          { label: r.label, color: PIE_COLORS[i % PIE_COLORS.length] },
+        ]),
+      ) as ChartConfig,
+    [mixRows],
+  )
+
+  const pieData = useMemo(
+    () => mixRows.map((r) => ({ name: r.label, value: r.value })),
+    [mixRows],
+  )
 
   const summary = data?.summary
   const deepLink = data && eventsDeepLink(endUserId, data.start, data.end)
@@ -357,7 +386,7 @@ export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyti
                     </p>
                   </div>
 
-                  <div className="grid gap-6 lg:grid-cols-2">
+                  <div className="grid gap-6 xl:grid-cols-2">
                     <div className="space-y-2 min-w-0">
                       <h3 className="text-sm font-medium">Mix by event type</h3>
                       {mixRows.length === 0 ? (
@@ -392,44 +421,97 @@ export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyti
                     </div>
 
                     <div className="space-y-2 min-w-0">
-                      <h3 className="text-sm font-medium flex items-center gap-2">
-                        <IconWorld className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                        Top domains
-                      </h3>
-                      {data && !data.topDomains.length ? (
+                      <h3 className="text-sm font-medium">Share by type</h3>
+                      {mixRows.length <= 1 ? (
                         <p className="text-sm text-muted-foreground py-6 text-center rounded-lg border border-dashed">
-                          No domain data in this range.
+                          {mixRows.length === 0
+                            ? "No type breakdown."
+                            : "Need at least two event types in range for a pie view."}
                         </p>
-                      ) : data ? (
-                        <Table>
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead>Domain</TableHead>
-                              <TableHead className="text-right tabular-nums">Visits</TableHead>
-                              <TableHead className="text-right tabular-nums">Served</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {data.topDomains.map((row) => (
-                              <TableRow key={row.domain}>
-                                <TableCell
-                                  className="font-mono text-xs max-w-[200px] truncate"
-                                  title={row.domain}
-                                >
-                                  {row.domain}
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {row.visits.toLocaleString()}
-                                </TableCell>
-                                <TableCell className="text-right tabular-nums">
-                                  {row.serves.toLocaleString()}
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      ) : null}
+                      ) : (
+                        <ChartContainer
+                          config={pieChartConfig}
+                          className="mx-auto aspect-square h-[min(280px,50vh)] max-h-[320px] w-full max-w-[320px] [&_.recharts-responsive-container]:!max-h-[320px]"
+                        >
+                          <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+                            <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
+                            <ChartLegend
+                              verticalAlign="middle"
+                              align="right"
+                              layout="vertical"
+                              wrapperStyle={{ width: "38%", paddingLeft: 6, fontSize: 12 }}
+                              content={
+                                <ChartLegendContent
+                                  verticalAlign="middle"
+                                  className="h-full !pt-0 !pb-0 flex-col items-start justify-center gap-1.5 pl-1 text-left"
+                                />
+                              }
+                            />
+                            <Pie
+                              data={pieData}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="42%"
+                              cy="50%"
+                              innerRadius="48%"
+                              outerRadius="88%"
+                              paddingAngle={2}
+                              strokeWidth={1}
+                            >
+                              {pieData.map((entry, index) => (
+                                <Cell
+                                  key={entry.name}
+                                  fill={PIE_COLORS[index % PIE_COLORS.length]}
+                                />
+                              ))}
+                            </Pie>
+                          </PieChart>
+                        </ChartContainer>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Same counts as the bar chart; legend shows type and color.
+                      </p>
                     </div>
+                  </div>
+
+                  <div className="space-y-2 min-w-0">
+                    <h3 className="text-sm font-medium flex items-center gap-2">
+                      <IconWorld className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                      Top domains
+                    </h3>
+                    {data && !data.topDomains.length ? (
+                      <p className="text-sm text-muted-foreground py-6 text-center rounded-lg border border-dashed">
+                        No domain data in this range.
+                      </p>
+                    ) : data ? (
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Domain</TableHead>
+                            <TableHead className="text-right tabular-nums">Visits</TableHead>
+                            <TableHead className="text-right tabular-nums">Served</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {data.topDomains.map((row) => (
+                            <TableRow key={row.domain}>
+                              <TableCell
+                                className="font-mono text-xs max-w-[200px] truncate"
+                                title={row.domain}
+                              >
+                                {row.domain}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {row.visits.toLocaleString()}
+                              </TableCell>
+                              <TableCell className="text-right tabular-nums">
+                                {row.serves.toLocaleString()}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    ) : null}
                   </div>
                 </>
               )}

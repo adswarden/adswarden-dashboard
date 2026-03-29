@@ -22,9 +22,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { IconPencil } from '@tabler/icons-react';
+import { IconPencil, IconSearch, IconX } from '@tabler/icons-react';
 import { DeleteButton } from '@/components/delete-button';
 import { campaignScheduleBrief, campaignStatusBadgeVariant } from '@/lib/campaign-display';
+
+/** Idle delay before applying name/ID filter (matches users quick search). */
+const SEARCH_DEBOUNCE_MS = 500;
 
 export interface CampaignListRow {
   id: string;
@@ -72,8 +75,21 @@ function audienceHint(audience: string): string {
 export function CampaignsListTable({ campaigns, isAdmin }: CampaignsListTableProps) {
   const router = useRouter();
   const [search, setSearch] = React.useState('');
+  const [debouncedSearch, setDebouncedSearch] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState<string>('all');
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
+
+  React.useEffect(() => {
+    const trimmed = search.trim();
+    if (!trimmed) {
+      setDebouncedSearch('');
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const goToCampaign = React.useCallback(
     (id: string) => {
@@ -83,15 +99,17 @@ export function CampaignsListTable({ campaigns, isAdmin }: CampaignsListTablePro
   );
 
   const filtered = React.useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = debouncedSearch.trim().toLowerCase();
     return campaigns.filter((c) => {
-      if (q && !c.name.toLowerCase().includes(q)) return false;
+      if (q && !c.name.toLowerCase().includes(q) && !c.id.toLowerCase().includes(q))
+        return false;
       if (typeFilter !== 'all' && c.campaignType !== typeFilter) return false;
       if (statusFilter !== 'all' && c.status !== statusFilter) return false;
       return true;
     });
-  }, [campaigns, search, typeFilter, statusFilter]);
+  }, [campaigns, debouncedSearch, typeFilter, statusFilter]);
 
+  const showClearSearch = search.trim().length > 0;
   const colCount = isAdmin ? 7 : 6;
 
   return (
@@ -99,16 +117,36 @@ export function CampaignsListTable({ campaigns, isAdmin }: CampaignsListTablePro
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="min-w-0 flex-1 space-y-2">
           <label htmlFor="campaign-search" className="sr-only">
-            Search campaigns by name
+            Search campaigns by name or ID
           </label>
-          <Input
-            id="campaign-search"
-            placeholder="Search by name…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-md"
-            autoComplete="off"
-          />
+          <div className="relative max-w-md">
+            <IconSearch
+              className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden
+            />
+            <Input
+              id="campaign-search"
+              placeholder="Name or ID…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={
+                showClearSearch ? 'w-full pl-9 pr-10' : 'w-full pl-9'
+              }
+              autoComplete="off"
+            />
+            {showClearSearch ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+              >
+                <IconX className="h-4 w-4" aria-hidden />
+              </Button>
+            ) : null}
+          </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="space-y-2">

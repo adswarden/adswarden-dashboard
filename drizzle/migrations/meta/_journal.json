@@ -15,6 +15,13 @@
       "when": 1743225600000,
       "tag": "0001_end_users_short_id_status_legacy",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1743302400000,
+      "tag": "0002_end_users_identifier_banned",
+      "breakpoints": true
     }
   ]
 }

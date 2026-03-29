@@ -37,8 +37,7 @@ function buildPaymentsFilterConditions(filters: PaymentsDashboardFilters): SQL[]
     conditions.push(
       or(
         ilike(sql`coalesce(${endUsers.email}, '')`, pattern),
-        ilike(endUsers.shortId, pattern),
-        ilike(sql`coalesce(${endUsers.installationId}, '')`, pattern),
+        ilike(sql`coalesce(${endUsers.identifier}, '')`, pattern),
         ilike(sql`coalesce(${endUsers.name}, '')`, pattern),
         ilike(sql`cast(${payments.id} as text)`, pattern)
       )!

@@ -15,7 +15,7 @@ const TRUNCATE_LENGTH = 28;
 
 interface UserIdentityCellProps {
   endUserId: string;
-  shortId: string;
+  identifier: string | null;
   displayEmail: string | null;
   /** Optional display name (shown as primary line when set). */
   displayName?: string | null;
@@ -23,17 +23,18 @@ interface UserIdentityCellProps {
 
 export function UserIdentityCell({
   endUserId,
-  shortId,
+  identifier,
   displayEmail,
   displayName,
 }: UserIdentityCellProps) {
   const email = displayEmail?.trim() || null;
   const name = displayName?.trim() || null;
-  /** Single primary label: name, or email, or short id (not email + short id together). */
-  const primary = name ?? email ?? shortId;
+  const idSuffix = endUserId.length > 8 ? `${endUserId.slice(0, 8)}…` : endUserId;
+  /** Single primary label: name, email, identifier, or shortened UUID. */
+  const primary = name ?? email ?? identifier ?? idSuffix;
   const truncated =
     primary.length > TRUNCATE_LENGTH ? `${primary.slice(0, TRUNCATE_LENGTH)}…` : primary;
-  const useMono = !name && !email;
+  const useMono = !name && !email && !identifier;
 
   const copyToClipboard = useCallback(async () => {
     try {
@@ -65,10 +66,12 @@ export function UserIdentityCell({
               <span className="text-muted-foreground">UUID: </span>
               {endUserId}
             </p>
-            <p className="font-mono text-xs">
-              <span className="text-muted-foreground">Short: </span>
-              {shortId}
-            </p>
+            {identifier ? (
+              <p className="font-mono text-xs">
+                <span className="text-muted-foreground">Identifier: </span>
+                {identifier}
+              </p>
+            ) : null}
             {email ? (
               <p className="text-xs">
                 <span className="text-muted-foreground">Email: </span>

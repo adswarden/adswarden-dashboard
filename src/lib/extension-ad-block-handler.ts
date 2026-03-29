@@ -1,0 +1,212 @@
+import 'server-only';
+
+import type { NextRequest } from 'next/server';
+import { database as db } from '@/db';
+import { enduserEvents, platforms } from '@/db/schema';
+import type { EndUserRow } from '@/db/schema';
+import { domainsMatch, normalizeDomainForMatch } from '@/lib/domain-utils';
+import {
+  type CampaignSelectRow,
+  fetchActiveCampaignRowsForExtension,
+  fetchFrequencyCountsForEndUser,
+  hydrateCampaignPayloads,
+} from '@/lib/extension-live-init';
+import {
+  currentLocalMinutesSinceMidnight,
+  filterQualifyingExtensionCampaigns,
+  isExtensionUserNewForAdBlock,
+  type ExtensionCampaignQualifyContext,
+  type ExtensionCampaignRuleFields,
+} from '@/lib/extension-ad-block-qualify';
+import { computeExtensionDaysLeft } from '@/lib/extension-user-subscription';
+
+export type ExtensionAdBlockPublicAd = {
+  title: string;
+  image: string | null;
+  description: string | null;
+  redirectUrl: string | null;
+  htmlCode: string | null;
+  displayAs?: 'inline' | 'popup';
+};
+
+export type ExtensionAdBlockPublicNotification = {
+  title: string;
+  message: string;
+  ctaLink: string | null;
+};
+
+export class ExtensionAdBlockError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: Record<string, unknown>
+  ) {
+    super(message);
+    this.name = 'ExtensionAdBlockError';
+  }
+}
+
+function formatTime(t: unknown): string | null {
+  if (t == null) return null;
+  return String(t);
+}
+
+function toRuleFields(c: CampaignSelectRow): ExtensionCampaignRuleFields {
+  return {
+    id: c.id,
+    targetAudience: c.targetAudience,
+    frequencyType: c.frequencyType,
+    frequencyCount: c.frequencyCount,
+    timeStart: formatTime(c.timeStart),
+    timeEnd: formatTime(c.timeEnd),
+    status: c.status,
+    startDate: c.startDate,
+    endDate: c.endDate,
+    countryCodes: c.countryCodes,
+  };
+}
+
+function campaignMatchesVisitDomain(
+  c: CampaignSelectRow,
+  platformIdSetForVisit: Set<string>
+): boolean {
+  const pids = c.platformIds ?? [];
+  if (c.campaignType === 'notification' || c.campaignType === 'redirect') {
+    if (pids.length === 0) return true;
+    return pids.some((id) => platformIdSetForVisit.has(id));
+  }
+  if (pids.length === 0) return false;
+  return pids.some((id) => platformIdSetForVisit.has(id));
+}
+
+export function geoCountryFromRequest(request: NextRequest): string | null {
+  const cf = request.headers.get('cf-ipcountry')?.trim().toUpperCase();
+  if (cf && cf.length === 2) return cf;
+  const vercel = request.headers.get('x-vercel-ip-country')?.trim().toUpperCase();
+  if (vercel && vercel.length === 2) return vercel;
+  return null;
+}
+
+export async function runExtensionAdBlock(params: {
+  endUser: EndUserRow;
+  request: NextRequest;
+  domain: string | undefined;
+  requestType?: 'ad' | 'notification';
+  /** Optional body `userAgent` when the runtime strips browser headers */
+  userAgent?: string | null;
+}): Promise<{ ads: ExtensionAdBlockPublicAd[]; notifications: ExtensionAdBlockPublicNotification[] }> {
+  const { endUser, request, domain: rawDomain, requestType } = params;
+
+  const daysLeft = computeExtensionDaysLeft({
+    endDate: endUser.endDate,
+    plan: endUser.plan,
+    startDate: endUser.startDate,
+  });
+  if (daysLeft !== null && daysLeft <= 0) {
+    throw new ExtensionAdBlockError('Access ended', 403, { error: 'trial_expired' });
+  }
+
+  const wantsAds = requestType !== 'notification';
+  const wantsNotifications = requestType !== 'ad';
+
+  const normalizedDomain = rawDomain?.trim()
+    ? normalizeDomainForMatch(rawDomain)
+    : '';
+
+  const platformRows = await db
+    .select({ id: platforms.id, domain: platforms.domain })
+    .from(platforms);
+
+  const platformIdSetForVisit = new Set<string>();
+  if (normalizedDomain) {
+    for (const p of platformRows) {
+      const d = (p.domain ?? '').trim();
+      if (d && domainsMatch(normalizedDomain, d)) {
+        platformIdSetForVisit.add(p.id);
+      }
+    }
+  }
+
+  const now = new Date();
+  const activeRows = await fetchActiveCampaignRowsForExtension(now);
+  const domainScoped = activeRows.filter((c) =>
+    campaignMatchesVisitDomain(c, platformIdSetForVisit)
+  );
+
+  const endUserIdStr = String(endUser.id);
+  const frequencyCounts = await fetchFrequencyCountsForEndUser(
+    endUserIdStr,
+    domainScoped.map((c) => c.id)
+  );
+
+  const isNewUser = isExtensionUserNewForAdBlock(endUser.startDate);
+  const geo = geoCountryFromRequest(request);
+  const ua =
+    params.userAgent?.trim().slice(0, 2000) ||
+    request.headers.get('user-agent')?.trim().slice(0, 2000) ||
+    null;
+
+  const ctx: ExtensionCampaignQualifyContext = {
+    now,
+    currentMinutes: currentLocalMinutesSinceMidnight(now),
+    isNewUser,
+    endUserGeoCountry: geo,
+    viewCountByCampaignId: new Map(Object.entries(frequencyCounts).map(([k, v]) => [k, v])),
+  };
+
+  const rules = domainScoped.map(toRuleFields);
+  const qualifiedRules = filterQualifyingExtensionCampaigns(rules, ctx);
+  const qualifiedIds = new Set(qualifiedRules.map((r) => r.id));
+  const qualifiedRows = domainScoped.filter((c) => qualifiedIds.has(c.id));
+
+  const hydrated = await hydrateCampaignPayloads(qualifiedRows);
+
+  const ads: ExtensionAdBlockPublicAd[] = [];
+  const notifications: ExtensionAdBlockPublicNotification[] = [];
+
+  const logDomain = normalizedDomain ? normalizedDomain.slice(0, 255) : null;
+  const emailVal = endUser.email?.trim() ? endUser.email.trim().slice(0, 255) : null;
+
+  for (const h of hydrated) {
+    if (wantsAds && h.ad && (h.campaignType === 'ads' || h.campaignType === 'popup')) {
+      ads.push({
+        title: h.ad.title,
+        image: h.ad.image,
+        description: h.ad.description,
+        redirectUrl: h.ad.redirectUrl,
+        htmlCode: h.ad.htmlCode,
+        displayAs: h.ad.displayAs,
+      });
+      const evType = h.campaignType === 'popup' ? 'popup' : 'ad';
+      await db.insert(enduserEvents).values({
+        endUserId: endUserIdStr,
+        email: emailVal,
+        plan: endUser.plan,
+        campaignId: h.id,
+        domain: logDomain,
+        type: evType,
+        country: geo,
+        userAgent: ua,
+      });
+    }
+    if (wantsNotifications && h.notification && h.campaignType === 'notification') {
+      notifications.push({
+        title: h.notification.title,
+        message: h.notification.message,
+        ctaLink: h.notification.ctaLink,
+      });
+      await db.insert(enduserEvents).values({
+        endUserId: endUserIdStr,
+        email: emailVal,
+        plan: endUser.plan,
+        campaignId: h.id,
+        domain: logDomain,
+        type: 'notification',
+        country: geo,
+        userAgent: ua,
+      });
+    }
+  }
+
+  return { ads, notifications };
+}

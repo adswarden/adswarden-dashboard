@@ -52,6 +52,50 @@ async function tableExists(client: postgres.Sql, name: string): Promise<boolean>
   return Boolean(rows[0]?.exists);
 }
 
+async function endUsersColumnExists(
+  client: postgres.Sql,
+  columnName: string
+): Promise<boolean> {
+  const rows = await client<{ exists: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'end_users'
+        AND column_name = ${columnName}
+    ) AS "exists"
+  `;
+  return Boolean(rows[0]?.exists);
+}
+
+/**
+ * Idempotent SQL from `0002_end_users_identifier_banned.sql`.
+ * Runs when `migrate()` did not apply it (journal/hash drift, DB cloned from another line, etc.).
+ */
+async function applyEndUsersIdentifierBannedPatch(client: postgres.Sql): Promise<void> {
+  if (!(await tableExists(client, 'end_users'))) {
+    return;
+  }
+  if (await endUsersColumnExists(client, 'identifier')) {
+    return;
+  }
+  const migrationsFolder = resolveMigrationsFolder();
+  const patchPath = path.join(migrationsFolder, '0002_end_users_identifier_banned.sql');
+  if (!existsSync(patchPath)) {
+    console.warn('[migrate] end_users identifier patch not found:', patchPath);
+    return;
+  }
+  const raw = readFileSync(patchPath, 'utf8');
+  const segments = raw
+    .split('--> statement-breakpoint')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  for (const segment of segments) {
+    await client.unsafe(segment);
+  }
+  console.log('[migrate] end_users identifier + banned column patch applied (idempotent)');
+}
+
 /** Warn if migrations were not applied (no bundled repair SQL in MVP). */
 export async function ensureRedirectsTables(client: postgres.Sql): Promise<void> {
   if (await tableExists(client, 'redirects')) {
@@ -92,32 +136,6 @@ export function ensureRedirectsSchemaOnce(): Promise<void> {
   return redirectsSchemaEnsurePromise;
 }
 
-/**
- * Idempotent SQL from 0001_end_users_short_id_status_legacy.sql.
- * Runs after migrate() so DBs that missed 0001 (journal/hash drift, manual DB, etc.) still get short_id + status.
- */
-async function applyEndUsersLegacySchemaPatch(client: postgres.Sql): Promise<void> {
-  if (!(await tableExists(client, 'end_users'))) {
-    return;
-  }
-  const migrationsFolder = resolveMigrationsFolder();
-  const patchPath = path.join(migrationsFolder, '0001_end_users_short_id_status_legacy.sql');
-  if (!existsSync(patchPath)) {
-    console.warn('[migrate] end_users legacy patch not found:', patchPath);
-    return;
-  }
-  const raw = readFileSync(patchPath, 'utf8');
-  const segments = raw
-    .split('--> statement-breakpoint')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  for (const segment of segments) {
-    await client.unsafe(segment);
-  }
-  console.log('[migrate] end_users legacy column patch applied (idempotent)');
-}
-
 export async function runMigrations(): Promise<void> {
   const rawUrl = process.env.DATABASE_URL;
   if (!rawUrl) {
@@ -135,7 +153,7 @@ export async function runMigrations(): Promise<void> {
   try {
     await migrate(db, { migrationsFolder });
     console.log('[migrate] Drizzle migrate() finished');
-    await applyEndUsersLegacySchemaPatch(client);
+    await applyEndUsersIdentifierBannedPatch(client);
   } finally {
     await client.end();
   }

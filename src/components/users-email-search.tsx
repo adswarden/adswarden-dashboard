@@ -1,6 +1,6 @@
 'use client';
 
-import { IconX } from '@tabler/icons-react';
+import { IconSearch, IconX } from '@tabler/icons-react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -55,16 +55,20 @@ export function UsersEmailSearch() {
   return (
     <div className="relative min-w-0 max-w-md">
       <label htmlFor="users-email-search" className="sr-only">
-        Search users by email
+        Search users by ID, username, or email
       </label>
+      <IconSearch
+        className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+        aria-hidden
+      />
       <Input
         id="users-email-search"
         type="text"
-        placeholder="Search by email…"
+        placeholder="ID, username, or email…"
         value={value}
         onChange={(e) => setValue(e.target.value)}
         autoComplete="off"
-        className={showClear ? 'w-full pr-10' : 'w-full'}
+        className={showClear ? 'w-full pl-9 pr-10' : 'w-full pl-9'}
       />
       {showClear ? (
         <Button
@@ -73,7 +77,7 @@ export function UsersEmailSearch() {
           size="icon-sm"
           className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
           onClick={clearEmail}
-          aria-label="Clear email search"
+          aria-label="Clear search"
         >
           <IconX className="h-4 w-4" aria-hidden />
         </Button>

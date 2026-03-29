@@ -26,7 +26,7 @@ export function UsersTable({ rows }: UsersTableProps) {
           <TableRow>
             <TableHead className="min-w-[180px]">User</TableHead>
             <TableHead className="min-w-[72px]">Plan</TableHead>
-            <TableHead className="min-w-[88px]">Status</TableHead>
+            <TableHead className="min-w-[72px]">Banned</TableHead>
             <TableHead className="w-[88px]">Country</TableHead>
             <TableHead className="text-right w-[96px] tabular-nums pr-8">Impressions</TableHead>
             <TableHead className="min-w-[140px]">Start date</TableHead>
@@ -53,13 +53,13 @@ export function UsersTable({ rows }: UsersTableProps) {
                   <TableCell>
                     <UserIdentityCell
                       endUserId={v.id}
-                      shortId={v.shortId}
+                      identifier={v.identifier}
                       displayEmail={v.email}
                       displayName={v.name}
                     />
                   </TableCell>
                   <TableCell className="capitalize text-sm">{v.plan}</TableCell>
-                  <TableCell className="capitalize text-sm">{v.status}</TableCell>
+                  <TableCell className="text-sm tabular-nums">{v.banned ? 'Yes' : 'No'}</TableCell>
                   <TableCell>
                     {v.country ? (
                       <span className="uppercase">{v.country}</span>
@@ -87,7 +87,7 @@ export function UsersTable({ rows }: UsersTableProps) {
                   </TableCell>
                   <TableCell className="text-center tabular-nums text-sm">{daysLeft}</TableCell>
                   <TableCell className="text-right">
-                    <EndUserRowActions userId={v.id} email={v.email} shortId={v.shortId} />
+                    <EndUserRowActions userId={v.id} email={v.email} identifier={v.identifier} />
                   </TableCell>
                 </TableRow>
               );

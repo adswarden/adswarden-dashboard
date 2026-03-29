@@ -58,7 +58,8 @@ describe('extension-ad-block-qualify', () => {
   });
 
   describe('isExtensionUserNewForAdBlock', () => {
-    it('returns true when anchor date is within 7 days', () => {
+    /** Mirrors ad-block: "new" from first event or `end_users.startDate` within window. */
+    it('returns true when account start / first event is within 7 days', () => {
       const today = new Date();
       expect(isExtensionUserNewForAdBlock(today)).toBe(true);
       const eightDaysAgo = new Date();
