@@ -47,15 +47,11 @@ const contentItems = [
 ]
 
 function getNavSections(role: Role) {
-  const overviewForRole =
-    role === "admin"
-      ? overviewItems
-      : overviewItems.filter((i) => i.url !== "/users")
   const sections: { label: string; items: typeof overviewItems }[] = [
-    { label: "Overview", items: overviewForRole },
+    { label: "Overview", items: overviewItems },
+    { label: "Content", items: contentItems },
   ]
   if (role === "admin") {
-    sections.push({ label: "Content", items: contentItems })
     sections.push({
       label: "Team",
       items: [

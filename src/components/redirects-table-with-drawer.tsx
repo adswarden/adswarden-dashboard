@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IconPlus, IconPencil } from '@tabler/icons-react';
 import { DeleteButton } from '@/components/delete-button';
 import { RedirectEditDrawer } from '@/components/redirect-edit-drawer';
@@ -109,23 +110,50 @@ export function RedirectsTableWithDrawer({ redirects: rows, initialEditId }: Red
                       }
                     }}
                   >
-                    <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">{r.name}</TableCell>
+                    <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {r.name}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {r.name}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
                     <TableCell className="min-w-0 px-4 py-3 align-middle font-mono text-sm">
-                      {r.sourceDomain}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {r.sourceDomain}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm break-all">
+                          {r.sourceDomain}
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
                     <TableCell className="min-w-0 px-4 py-3 align-middle text-sm">
                       {r.includeSubdomains ? 'Yes' : 'No'}
                     </TableCell>
                     <TableCell className="max-w-[220px] min-w-0 px-4 py-3 align-middle">
-                      <a
-                        href={r.destinationUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="block truncate text-primary underline-offset-4 hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {r.destinationUrl}
-                      </a>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <a
+                            href={r.destinationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-block max-w-full cursor-pointer truncate text-primary underline-offset-4 hover:underline"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {r.destinationUrl}
+                          </a>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm break-all">
+                          {r.destinationUrl}
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
                     <TableCell className="min-w-0 px-4 py-3 align-middle tabular-nums">
                       <div className="flex justify-center">

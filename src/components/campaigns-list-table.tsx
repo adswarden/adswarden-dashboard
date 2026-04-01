@@ -271,7 +271,7 @@ export function CampaignsListTable({ campaigns, isAdmin }: CampaignsListTablePro
                     <span className="text-muted-foreground text-sm">
                       {(c.campaignType === 'notification' || c.campaignType === 'redirect') &&
                       (c.platformIds?.length ?? 0) === 0
-                        ? 'All platforms'
+                        ? 'All domains'
                         : `${c.platformIds?.length ?? 0} platforms`}
                       {(c.countryCodes?.length ?? 0) > 0
                         ? ` · ${c.countryCodes!.length} countries`
@@ -294,6 +294,7 @@ export function CampaignsListTable({ campaigns, isAdmin }: CampaignsListTablePro
                         <DeleteButton
                           name={c.name}
                           entityType="campaign"
+                          campaignStatus={c.status}
                           apiPath={`/api/campaigns/${c.id}`}
                         />
                       </div>

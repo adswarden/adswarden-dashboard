@@ -18,6 +18,7 @@
     "db:studio": "drizzle-kit studio",
     "test": "vitest run",
     "test:integration": "EXTENSION_INTEGRATION=1 vitest run tests/user-flow/extension/",
+    "test:frequency-load": "EXTENSION_INTEGRATION=1 vitest run tests/user-flow/extension/extension-multi-user-frequency-load.integration.test.ts",
     "test:unit": "vitest run tests/task-based/auth-scope.test.ts",
     "test:watch": "vitest",
     "test:extension": "vitest run tests/function-based/extension-ad-block-qualify.test.ts",

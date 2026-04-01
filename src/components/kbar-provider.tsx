@@ -54,19 +54,15 @@ function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[
       icon: <IconTargetArrow className="size-4" />,
       perform: () => router.push("/campaigns"),
     },
-    ...(role === "admin"
-      ? ([
-        {
-          id: "users",
-          name: "Users",
-          shortcut: ["u", "u"],
-          keywords: "end user users extension",
-          section: "Overview",
-          icon: <IconUserSearch className="size-4" />,
-          perform: () => router.push("/users"),
-        },
-      ] satisfies Action[])
-      : []),
+    {
+      id: "users",
+      name: "Users",
+      shortcut: ["u", "u"],
+      keywords: "end user users extension",
+      section: "Overview",
+      icon: <IconUserSearch className="size-4" />,
+      perform: () => router.push("/users"),
+    },
     {
       id: "events",
       name: "Events",
@@ -86,10 +82,6 @@ function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[
       perform: () => router.push("/account"),
     },
   ]
-
-  if (role !== "admin") {
-    return overview
-  }
 
   const content: Action[] = [
     {
@@ -129,6 +121,10 @@ function buildActions(role: Role, router: ReturnType<typeof useRouter>): Action[
       perform: () => router.push("/redirects"),
     },
   ]
+
+  if (role !== "admin") {
+    return [...overview, ...content]
+  }
 
   const team: Action[] = [
     {

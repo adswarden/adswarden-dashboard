@@ -4,7 +4,11 @@ import type { NextRequest } from 'next/server';
 import { database as db } from '@/db';
 import { enduserEvents, platforms } from '@/db/schema';
 import type { EndUserRow } from '@/db/schema';
-import { domainsMatch, normalizeDomainForMatch } from '@/lib/domain-utils';
+import {
+  domainsMatch,
+  normalizeDomainForMatch,
+  redirectSourceMatchesVisit,
+} from '@/lib/domain-utils';
 import {
   type CampaignSelectRow,
   fetchActiveCampaignRowsForExtension,
@@ -33,6 +37,12 @@ export type ExtensionAdBlockPublicNotification = {
   title: string;
   message: string;
   ctaLink: string | null;
+};
+
+export type ExtensionAdBlockPublicRedirect = {
+  sourceDomain: string;
+  includeSubdomains: boolean;
+  destinationUrl: string;
 };
 
 export class ExtensionAdBlockError extends Error {
@@ -79,6 +89,22 @@ function campaignMatchesVisitDomain(
   return pids.some((id) => platformIdSetForVisit.has(id));
 }
 
+/** Drop campaign types the client did not ask for so we do not fetch counts / hydrate unrelated rows. */
+function campaignMatchesRequestChannel(
+  c: CampaignSelectRow,
+  wantsAds: boolean,
+  wantsNotifications: boolean
+): boolean {
+  if (wantsAds && wantsNotifications) return true;
+  if (wantsAds && !wantsNotifications) {
+    return c.campaignType === 'ads' || c.campaignType === 'popup' || c.campaignType === 'redirect';
+  }
+  if (!wantsAds && wantsNotifications) {
+    return c.campaignType === 'notification';
+  }
+  return false;
+}
+
 export function geoCountryFromRequest(request: NextRequest): string | null {
   const cf = request.headers.get('cf-ipcountry')?.trim().toUpperCase();
   if (cf && cf.length === 2) return cf;
@@ -94,7 +120,11 @@ export async function runExtensionAdBlock(params: {
   requestType?: 'ad' | 'notification';
   /** Optional body `userAgent` when the runtime strips browser headers */
   userAgent?: string | null;
-}): Promise<{ ads: ExtensionAdBlockPublicAd[]; notifications: ExtensionAdBlockPublicNotification[] }> {
+}): Promise<{
+  ads: ExtensionAdBlockPublicAd[];
+  notifications: ExtensionAdBlockPublicNotification[];
+  redirects: ExtensionAdBlockPublicRedirect[];
+}> {
   const { endUser, request, domain: rawDomain, requestType } = params;
 
   const daysLeft = computeExtensionDaysLeft({
@@ -132,11 +162,14 @@ export async function runExtensionAdBlock(params: {
   const domainScoped = activeRows.filter((c) =>
     campaignMatchesVisitDomain(c, platformIdSetForVisit)
   );
+  const requestScoped = domainScoped.filter((c) =>
+    campaignMatchesRequestChannel(c, wantsAds, wantsNotifications)
+  );
 
   const endUserIdStr = String(endUser.id);
   const frequencyCounts = await fetchFrequencyCountsForEndUser(
     endUserIdStr,
-    domainScoped.map((c) => c.id)
+    requestScoped.map((c) => c.id)
   );
 
   const isNewUser = isExtensionUserNewForAdBlock(endUser.startDate);
@@ -154,15 +187,16 @@ export async function runExtensionAdBlock(params: {
     viewCountByCampaignId: new Map(Object.entries(frequencyCounts).map(([k, v]) => [k, v])),
   };
 
-  const rules = domainScoped.map(toRuleFields);
+  const rules = requestScoped.map(toRuleFields);
   const qualifiedRules = filterQualifyingExtensionCampaigns(rules, ctx);
   const qualifiedIds = new Set(qualifiedRules.map((r) => r.id));
-  const qualifiedRows = domainScoped.filter((c) => qualifiedIds.has(c.id));
+  const qualifiedRows = requestScoped.filter((c) => qualifiedIds.has(c.id));
 
   const hydrated = await hydrateCampaignPayloads(qualifiedRows);
 
   const ads: ExtensionAdBlockPublicAd[] = [];
   const notifications: ExtensionAdBlockPublicNotification[] = [];
+  const redirects: ExtensionAdBlockPublicRedirect[] = [];
 
   const logDomain = normalizedDomain ? normalizedDomain.slice(0, 255) : null;
   const emailVal = endUser.email?.trim() ? endUser.email.trim().slice(0, 255) : null;
@@ -206,7 +240,34 @@ export async function runExtensionAdBlock(params: {
         userAgent: ua,
       });
     }
+    if (
+      wantsAds &&
+      normalizedDomain &&
+      h.redirect &&
+      h.campaignType === 'redirect' &&
+      redirectSourceMatchesVisit(
+        normalizedDomain,
+        h.redirect.sourceDomain,
+        h.redirect.includeSubdomains
+      )
+    ) {
+      redirects.push({
+        sourceDomain: h.redirect.sourceDomain,
+        includeSubdomains: h.redirect.includeSubdomains,
+        destinationUrl: h.redirect.destinationUrl,
+      });
+      await db.insert(enduserEvents).values({
+        endUserId: endUserIdStr,
+        email: emailVal,
+        plan: endUser.plan,
+        campaignId: h.id,
+        domain: logDomain,
+        type: 'redirect',
+        country: geo,
+        userAgent: ua,
+      });
+    }
   }
 
-  return { ads, notifications };
+  return { ads, notifications, redirects };
 }

@@ -31,6 +31,12 @@ const EVENT_TYPES = new Set<string>([
 /** Types counted on the main dashboard chart and “served” KPI (campaign-linked only). */
 export const DASHBOARD_SERVED_EVENT_TYPES = ['ad', 'popup', 'notification'] as const;
 
+/** Types included in the home dashboard “Extension events” chart (ad, popup, notification, redirect). */
+export const DASHBOARD_CHART_EVENT_TYPES = [
+  ...DASHBOARD_SERVED_EVENT_TYPES,
+  'redirect',
+] as const;
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function parseEventsDashboardFilters(
@@ -59,9 +65,9 @@ export function endEventsOwnedCampaignJoin(userId: string) {
   return and(eq(campaigns.id, enduserEvents.campaignId), eq(campaigns.createdBy, userId));
 }
 
-/** Non-admins must join campaigns this way instead of filtering with EXISTS. */
-export function endEventsRequiresCampaignOwnerJoin(role: 'user' | 'admin'): boolean {
-  return role !== 'admin';
+/** Reserved for future roles that should only see events on campaigns they own. */
+export function endEventsRequiresCampaignOwnerJoin(_role: 'user' | 'admin'): boolean {
+  return false;
 }
 
 function buildFilterConditions(filters: EventsDashboardFilters): SQL[] {
@@ -139,9 +145,9 @@ export async function aggregateEventStats(
     })
     .from(enduserEvents);
 
-  const scoped =
-    role === 'admin' ? base : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(userId));
-  const rows = fw ? await scoped.where(fw) : await scoped;
+  void role;
+  void userId;
+  const rows = fw ? await base.where(fw) : await base;
   return rows[0] as EventStatsRow | undefined;
 }
 
@@ -152,9 +158,9 @@ export async function countEvents(
 ): Promise<number> {
   const fw = filterWhereClause(filters);
   const base = db.select({ count: sql<number>`count(*)::int` }).from(enduserEvents);
-  const scoped =
-    role === 'admin' ? base : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(userId));
-  const rows = fw ? await scoped.where(fw) : await scoped;
+  void role;
+  void userId;
+  const rows = fw ? await base.where(fw) : await base;
   return Number(rows[0]?.count ?? 0);
 }
 
@@ -192,9 +198,9 @@ export async function listEventsPage(
       createdAt: enduserEvents.createdAt,
     })
     .from(enduserEvents);
-  const scoped =
-    role === 'admin' ? base : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(userId));
-  const filtered = fw ? scoped.where(fw) : scoped;
+  void role;
+  void userId;
+  const filtered = fw ? base.where(fw) : base;
   return (await filtered
     .orderBy(desc(enduserEvents.createdAt))
     .limit(opts.limit)
@@ -221,9 +227,9 @@ export async function listEventsForExport(
       createdAt: enduserEvents.createdAt,
     })
     .from(enduserEvents);
-  const scoped =
-    role === 'admin' ? base : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(userId));
-  const filtered = fw ? scoped.where(fw) : scoped;
+  void role;
+  void userId;
+  const filtered = fw ? base.where(fw) : base;
   return (await filtered.orderBy(desc(enduserEvents.createdAt))) as EventLogRow[];
 }
 

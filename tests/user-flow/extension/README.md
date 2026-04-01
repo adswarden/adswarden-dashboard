@@ -8,6 +8,7 @@ Integration tests for the **extension** surface: register/login, domains, ad-blo
 |------|-------------------|
 | `extension-user-flow.integration.test.ts` | HTTP: `POST` register/login, `GET` domains, `POST` ad-block with bearer token; asserts status codes, token shape, JSON arrays. |
 | `extension-event-types-frequency.integration.test.ts` | Creates campaigns, fires many ad-block requests, asserts per-campaign caps and `enduser_events` row types/counts via Drizzle + live DB. |
+| `extension-multi-user-frequency-load.integration.test.ts` | 10 users × 15 requests per campaign type (`ads`, `popup`, `notification`, `redirect`), asserts per-user `specific_count` cap and DB event rows; runs types sequentially. |
 
 ## Prerequisites
 
@@ -27,6 +28,12 @@ Single file:
 
 ```bash
 EXTENSION_INTEGRATION=1 pnpm vitest run tests/user-flow/extension/extension-user-flow.integration.test.ts
+```
+
+Multi-user frequency load only (long-running):
+
+```bash
+pnpm test:frequency-load
 ```
 
 Verbose:

@@ -68,9 +68,68 @@ integration('extension user HTTP flow (register → login → domains → ad-blo
       body: JSON.stringify({ domain, requestType: 'ad' }),
     });
     expect(blockRes.status).toBe(200);
-    const body = (await blockRes.json()) as { ads: unknown[]; notifications: unknown[] };
+    const body = (await blockRes.json()) as {
+      ads: unknown[];
+      notifications: unknown[];
+      redirects: unknown[];
+    };
     expect(Array.isArray(body.ads)).toBe(true);
     expect(Array.isArray(body.notifications)).toBe(true);
+    expect(Array.isArray(body.redirects)).toBe(true);
+  });
+
+  it('ad-block with requestType notification omits domain and returns empty ads', async () => {
+    const loginRes = await fetch(`${BASE}/api/extension/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    expect(loginRes.ok).toBe(true);
+    const { token } = (await loginRes.json()) as { token: string };
+
+    const blockRes = await fetch(`${BASE}/api/extension/ad-block`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'user-agent': 'vitest-extension-integration',
+      },
+      body: JSON.stringify({ requestType: 'notification' }),
+    });
+    expect(blockRes.status).toBe(200);
+    const body = (await blockRes.json()) as {
+      ads: unknown[];
+      notifications: unknown[];
+      redirects: unknown[];
+    };
+    expect(Array.isArray(body.ads)).toBe(true);
+    expect(body.ads).toHaveLength(0);
+    expect(Array.isArray(body.notifications)).toBe(true);
+    expect(Array.isArray(body.redirects)).toBe(true);
+    expect(body.redirects).toHaveLength(0);
+  });
+
+  it('ad-block rejects ad request without domain (400)', async () => {
+    const loginRes = await fetch(`${BASE}/api/extension/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    expect(loginRes.ok).toBe(true);
+    const { token } = (await loginRes.json()) as { token: string };
+
+    const blockRes = await fetch(`${BASE}/api/extension/ad-block`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'user-agent': 'vitest-extension-integration',
+      },
+      body: JSON.stringify({ requestType: 'ad' }),
+    });
+    expect(blockRes.status).toBe(400);
+    const err = (await blockRes.json()) as { error?: string };
+    expect(err.error).toBe('Validation failed');
   });
 });
 

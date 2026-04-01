@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IconPlus, IconPencil } from '@tabler/icons-react';
 import { DeleteButton } from '@/components/delete-button';
 import { NotificationEditDrawer } from '@/components/notification-edit-drawer';
@@ -112,22 +113,47 @@ export function NotificationsTableWithDrawer({
                     }}
                   >
                     <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">
-                      {notification.title}
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {notification.title}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {notification.title}
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
-                    <TableCell className="max-w-xs min-w-0 px-4 py-3 align-middle truncate">
-                      {notification.message}
+                    <TableCell className="max-w-xs min-w-0 overflow-hidden px-4 py-3 align-middle">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {notification.message}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {notification.message}
+                        </TooltipContent>
+                      </Tooltip>
                     </TableCell>
-                    <TableCell className="max-w-[200px] min-w-0 px-4 py-3 align-middle">
+                    <TableCell className="max-w-[200px] min-w-0 overflow-hidden px-4 py-3 align-middle">
                       {notification.ctaLink ? (
-                        <a
-                          href={notification.ctaLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block truncate text-primary underline-offset-4 hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {notification.ctaLink}
-                        </a>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <a
+                              href={notification.ctaLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block max-w-full cursor-pointer truncate text-primary underline-offset-4 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {notification.ctaLink}
+                            </a>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-sm break-all">
+                            {notification.ctaLink}
+                          </TooltipContent>
+                        </Tooltip>
                       ) : (
                         <span className="text-sm text-muted-foreground">—</span>
                       )}

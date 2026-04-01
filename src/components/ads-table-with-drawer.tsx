@@ -12,6 +12,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IconPlus, IconPencil } from '@tabler/icons-react';
 import { DeleteButton } from '@/components/delete-button';
 import { AdEditDrawer } from '@/components/ad-edit-drawer';
@@ -77,15 +78,17 @@ export function AdsTableWithDrawer({ ads, initialEditId }: AdsTableWithDrawerPro
           <Table className="table-fixed">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="h-12 min-w-0 px-4 py-3 font-medium">Name</TableHead>
-                <TableHead className="h-12 w-[35%] min-w-0 px-4 py-3 font-medium">
+                <TableHead className="h-12 min-w-0 w-[34%] px-4 py-3 font-medium">Name</TableHead>
+                <TableHead className="h-12 min-w-0 w-[20%] px-4 py-3 font-medium">
                   Target URL
                 </TableHead>
-                <TableHead className="h-12 min-w-0 px-4 py-3 text-center font-medium tabular-nums">
+                <TableHead className="h-12 min-w-0 w-[8%] px-4 py-3 text-center font-medium tabular-nums">
                   Campaigns
                 </TableHead>
-                <TableHead className="h-12 min-w-0 px-4 py-3 font-medium">Created</TableHead>
-                <TableHead className="h-12 min-w-0 px-4 py-3 text-right font-medium">Actions</TableHead>
+                <TableHead className="h-12 min-w-0 w-[26%] px-4 py-3 font-medium">Created</TableHead>
+                <TableHead className="h-12 min-w-0 w-[12%] px-4 py-3 text-right font-medium">
+                  Actions
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -109,19 +112,36 @@ export function AdsTableWithDrawer({ ads, initialEditId }: AdsTableWithDrawerPro
                       }
                     }}
                   >
-                    <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">{ad.name}</TableCell>
-                    <TableCell className="max-w-xs min-w-0 overflow-hidden px-4 py-3 align-middle whitespace-normal">
+                    <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {ad.name}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {ad.name}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="min-w-0 overflow-hidden px-4 py-3 align-middle">
                       {ad.targetUrl ? (
-                        <a
-                          href={ad.targetUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          title={ad.targetUrl}
-                          className="block max-w-full truncate text-primary underline-offset-4 hover:underline"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {ad.targetUrl}
-                        </a>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <a
+                              href={ad.targetUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block max-w-full cursor-pointer truncate text-primary underline-offset-4 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {ad.targetUrl}
+                            </a>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-sm break-all">
+                            {ad.targetUrl}
+                          </TooltipContent>
+                        </Tooltip>
                       ) : (
                         <span className="text-sm text-muted-foreground">—</span>
                       )}

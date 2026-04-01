@@ -47,7 +47,7 @@ export function CampaignHeader({ campaign, isAdmin = false }: CampaignHeaderProp
               : 'Summary and performance below. Edit delivery rules from the campaign form.'}
           </p>
         </div>
-        {isAdmin && !isDeleted && (
+        {isAdmin && (
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" asChild className="min-h-9">
               <Link href={`/campaigns/${campaign.id}/edit`}>
@@ -58,6 +58,7 @@ export function CampaignHeader({ campaign, isAdmin = false }: CampaignHeaderProp
             <DeleteButton
               name={campaign.name}
               entityType="campaign"
+              campaignStatus={campaign.status}
               apiPath={`/api/campaigns/${campaign.id}`}
               redirectTo="/campaigns"
             />

@@ -4,7 +4,7 @@ import { campaigns, enduserEvents } from '@/db/schema';
 import { and, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
 import {
-  DASHBOARD_SERVED_EVENT_TYPES,
+  DASHBOARD_CHART_EVENT_TYPES,
   endEventsOwnedCampaignJoin,
 } from '@/lib/events-dashboard';
 import { getStartDate, fillMissingDays } from '@/lib/date-range';
@@ -22,7 +22,9 @@ const RANGE_DAYS: Record<RangeKey, number> = {
 export interface ChartDataPoint {
   date: string;
   ad: number;
+  popup: number;
   notification: number;
+  redirect: number;
 }
 
 export async function GET(request: NextRequest) {
@@ -44,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     const scopeWhere = and(
       isNotNull(enduserEvents.campaignId),
-      inArray(enduserEvents.type, DASHBOARD_SERVED_EVENT_TYPES),
+      inArray(enduserEvents.type, [...DASHBOARD_CHART_EVENT_TYPES]),
       gte(enduserEvents.createdAt, start),
       lte(enduserEvents.createdAt, end)
     );
@@ -52,8 +54,10 @@ export async function GET(request: NextRequest) {
     const base = db
       .select({
         dateStr: sql<string>`${utcDay}::text`,
-        ad: sql<number>`coalesce(sum(case when ${enduserEvents.type} in ('ad', 'popup') then 1 else 0 end), 0)::int`,
+        ad: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'ad' then 1 else 0 end), 0)::int`,
+        popup: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'popup' then 1 else 0 end), 0)::int`,
         notification: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'notification' then 1 else 0 end), 0)::int`,
+        redirect: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'redirect' then 1 else 0 end), 0)::int`,
       })
       .from(enduserEvents);
 
@@ -64,16 +68,21 @@ export async function GET(request: NextRequest) {
 
     const rows = await scoped.where(scopeWhere).groupBy(utcDay);
 
-    const dataByDate = new Map<string, { ad: number; notification: number }>();
+    const dataByDate = new Map<
+      string,
+      { ad: number; popup: number; notification: number; redirect: number }
+    >();
     for (const row of rows) {
       dataByDate.set(row.dateStr, {
         ad: Number(row.ad),
+        popup: Number(row.popup),
         notification: Number(row.notification),
+        redirect: Number(row.redirect),
       });
     }
 
     const chartData = fillMissingDays(start, end, (dateStr) =>
-      dataByDate.get(dateStr) ?? { ad: 0, notification: 0 }
+      dataByDate.get(dateStr) ?? { ad: 0, popup: 0, notification: 0, redirect: 0 }
     ) as ChartDataPoint[];
 
     return NextResponse.json(chartData);

@@ -34,16 +34,27 @@ import { cn } from "@/lib/utils"
 interface ChartDataPoint {
   date: string
   ad: number
+  popup: number
   notification: number
+  redirect: number
 }
 
+/** Stacked bottom → top: notification, ad, popup, redirect — theme chart-5…2 ramp (violet, matches primary). */
 const chartConfig = {
-  ad: {
-    label: "Ad & popup",
-    color: "var(--chart-1)",
-  },
   notification: {
     label: "Notification",
+    color: "var(--chart-5)",
+  },
+  ad: {
+    label: "Ad",
+    color: "var(--chart-4)",
+  },
+  popup: {
+    label: "Popup",
+    color: "var(--chart-3)",
+  },
+  redirect: {
+    label: "Redirect",
     color: "var(--chart-2)",
   },
 } satisfies ChartConfig
@@ -55,7 +66,13 @@ const rangeLabels: Record<string, string> = {
 }
 
 function isAllZeroChartData(data: ChartDataPoint[]) {
-  return data.every((d) => d.ad === 0 && d.notification === 0)
+  return data.every(
+    (d) =>
+      d.ad === 0 &&
+      d.popup === 0 &&
+      d.notification === 0 &&
+      d.redirect === 0
+  )
 }
 
 export interface ChartAreaInteractiveProps {
@@ -116,7 +133,7 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
           <CardTitle className="text-sm font-medium">Extension events</CardTitle>
           <CardDescription className="text-xs leading-relaxed">
             <span className="hidden @[540px]/card:block">
-              Campaign-linked impressions: ad and popup (one series), plus notification —{" "}
+              Campaign-linked events by type: ad, popup, notification, and redirect —{" "}
               {descriptionText.toLowerCase()}
             </span>
             <span className="@[540px]/card:hidden">{descriptionText}</span>
@@ -215,6 +232,18 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
                     stopOpacity={0.1}
                   />
                 </linearGradient>
+                <linearGradient id="fillPopup" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="5%"
+                    stopColor="var(--color-popup)"
+                    stopOpacity={0.9}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor="var(--color-popup)"
+                    stopOpacity={0.1}
+                  />
+                </linearGradient>
                 <linearGradient id="fillNotification" x1="0" y1="0" x2="0" y2="1">
                   <stop
                     offset="5%"
@@ -224,6 +253,18 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
                   <stop
                     offset="95%"
                     stopColor="var(--color-notification)"
+                    stopOpacity={0.1}
+                  />
+                </linearGradient>
+                <linearGradient id="fillRedirect" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="5%"
+                    stopColor="var(--color-redirect)"
+                    stopOpacity={0.85}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor="var(--color-redirect)"
                     stopOpacity={0.1}
                   />
                 </linearGradient>
@@ -269,6 +310,20 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
                 type="natural"
                 fill="url(#fillAd)"
                 stroke="var(--color-ad)"
+                stackId="a"
+              />
+              <Area
+                dataKey="popup"
+                type="natural"
+                fill="url(#fillPopup)"
+                stroke="var(--color-popup)"
+                stackId="a"
+              />
+              <Area
+                dataKey="redirect"
+                type="natural"
+                fill="url(#fillRedirect)"
+                stroke="var(--color-redirect)"
                 stackId="a"
               />
             </AreaChart>

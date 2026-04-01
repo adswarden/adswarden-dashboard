@@ -68,6 +68,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ads: result.ads,
       notifications: result.notifications,
+      redirects: result.redirects,
     });
   } catch (error) {
     if (error instanceof ExtensionAdBlockError) {

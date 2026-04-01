@@ -1,9 +1,8 @@
 import 'server-only';
 
 import { database as db } from '@/db';
-import { campaigns, enduserEvents } from '@/db/schema';
+import { enduserEvents } from '@/db/schema';
 import { and, eq, gte, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
-import { endEventsOwnedCampaignJoin } from '@/lib/events-dashboard';
 import { fillMissingDays, getStartDate } from '@/lib/date-range';
 
 export type EndUserAnalyticsRange = '7d' | '30d' | '90d';
@@ -69,12 +68,10 @@ export async function getEndUserEventSummary(
     })
     .from(enduserEvents);
 
-  const scoped =
-    role === 'admin'
-      ? base
-      : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(dashboardUserId));
+  void role;
+  void dashboardUserId;
 
-  const rows = await scoped.where(window);
+  const rows = await base.where(window);
   const row = rows[0];
   const ad = Number(row?.ad ?? 0);
   const popup = Number(row?.popup ?? 0);
@@ -114,12 +111,10 @@ export async function getEndUserDailySeries(
     })
     .from(enduserEvents);
 
-  const scoped =
-    role === 'admin'
-      ? base
-      : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(dashboardUserId));
+  void role;
+  void dashboardUserId;
 
-  const rows = await scoped.where(window).groupBy(utcDay);
+  const rows = await base.where(window).groupBy(utcDay);
 
   const byDate = new Map<string, Omit<EndUserDailySeriesRow, 'date'>>();
   for (const r of rows) {
@@ -178,12 +173,10 @@ export async function getEndUserTopDomains(
     })
     .from(enduserEvents);
 
-  const scoped =
-    role === 'admin'
-      ? base
-      : base.innerJoin(campaigns, endEventsOwnedCampaignJoin(dashboardUserId));
+  void role;
+  void dashboardUserId;
 
-  const rows = await scoped
+  const rows = await base
     .where(domainWhere)
     .groupBy(domainCol)
     .orderBy(

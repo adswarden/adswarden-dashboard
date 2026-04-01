@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import { campaigns, notifications } from '@/db/schema';
+import { campaigns, enduserEvents, notifications } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { formatCampaignResponse, getAccessibleCampaignById } from '@/lib/campaign-access';
 import { getSessionWithRole } from '@/lib/dal';
@@ -195,9 +195,14 @@ export async function PUT(
   }
 }
 
-// DELETE campaign (admin only)
+function isPermanentDeleteQuery(request: NextRequest): boolean {
+  const v = request.nextUrl.searchParams.get('permanent');
+  return v === '1' || v?.toLowerCase() === 'true';
+}
+
+// DELETE campaign (admin only): default soft-delete; `?permanent=1` removes campaign row and related enduser_events
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -214,8 +219,18 @@ export async function DELETE(
     if (!existing) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
+
+    if (isPermanentDeleteQuery(request)) {
+      await publishCampaignUpdated(id);
+      await db.transaction(async (tx) => {
+        await tx.delete(enduserEvents).where(eq(enduserEvents.campaignId, id));
+        await tx.delete(campaigns).where(eq(campaigns.id, id));
+      });
+      return NextResponse.json({ success: true, permanent: true });
+    }
+
     if (existing.status === 'deleted') {
-      return NextResponse.json({ success: true, softDeleted: true });
+      return NextResponse.json({ success: true, softDeleted: true, alreadySoftDeleted: true });
     }
 
     const now = new Date();

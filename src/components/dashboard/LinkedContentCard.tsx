@@ -11,13 +11,13 @@ type LinkedContent =
   | { type: 'ad'; id: string; name: string; description: string | null; imageUrl: string | null; targetUrl: string | null }
   | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null }
   | {
-      type: 'redirect';
-      id: string;
-      name: string;
-      sourceDomain: string;
-      includeSubdomains: boolean;
-      destinationUrl: string;
-    };
+    type: 'redirect';
+    id: string;
+    name: string;
+    sourceDomain: string;
+    includeSubdomains: boolean;
+    destinationUrl: string;
+  };
 
 interface LinkedContentCardProps {
   linkedContent: LinkedContent | null;
