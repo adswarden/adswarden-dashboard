@@ -54,7 +54,13 @@ function AdEditDrawerContent({
   const [patchedAd, setPatchedAd] = useState<Ad | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'view' | 'edit'>(showEditAction ? initialMode : 'view');
+  const [internalMode, setInternalMode] = useState<'view' | 'edit'>(
+    showEditAction ? initialMode : 'view'
+  );
+  if (!showEditAction && internalMode === 'edit') {
+    setInternalMode('view');
+  }
+  const mode = showEditAction ? internalMode : 'view';
   const [imageError, setImageError] = useState(false);
 
   const resolvedAd = patchedAd ?? ad ?? fetchedAd;
@@ -99,20 +105,14 @@ function AdEditDrawerContent({
     };
   }, [adId, ad]);
 
-  useEffect(() => {
-    if (!showEditAction && mode === 'edit') {
-      setMode('view');
-    }
-  }, [showEditAction, mode]);
-
   const handleSuccess = async (updated?: Ad) => {
     if (updated) setPatchedAd(updated);
-    setMode('view');
+    setInternalMode('view');
     router.refresh();
   };
 
   const handleCancel = () => {
-    setMode('view');
+    setInternalMode('view');
   };
 
   const title =
@@ -126,7 +126,7 @@ function AdEditDrawerContent({
 
   const headerActions =
     mode === 'view' && resolvedAd && showEditAction ? (
-      <Button type="button" size="sm" variant="outline" onClick={() => setMode('edit')}>
+      <Button type="button" size="sm" variant="outline" onClick={() => setInternalMode('edit')}>
         <IconPencil className="mr-2 h-4 w-4" />
         Edit
       </Button>

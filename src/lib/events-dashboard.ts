@@ -66,7 +66,8 @@ export function endEventsOwnedCampaignJoin(userId: string) {
 }
 
 /** Reserved for future roles that should only see events on campaigns they own. */
-export function endEventsRequiresCampaignOwnerJoin(_role: 'user' | 'admin'): boolean {
+export function endEventsRequiresCampaignOwnerJoin(role: 'user' | 'admin'): boolean {
+  void role;
   return false;
 }
 

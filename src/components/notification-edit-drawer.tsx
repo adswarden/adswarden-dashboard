@@ -52,7 +52,13 @@ function NotificationEditDrawerContent({
   const [patchedNotification, setPatchedNotification] = useState<Notification | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'view' | 'edit'>(showEditAction ? initialMode : 'view');
+  const [internalMode, setInternalMode] = useState<'view' | 'edit'>(
+    showEditAction ? initialMode : 'view'
+  );
+  if (!showEditAction && internalMode === 'edit') {
+    setInternalMode('view');
+  }
+  const mode = showEditAction ? internalMode : 'view';
 
   const resolvedNotification = patchedNotification ?? notification ?? fetchedNotification;
   const displayError = !notification && !notificationId ? 'No notification selected' : fetchError;
@@ -90,20 +96,14 @@ function NotificationEditDrawerContent({
     };
   }, [notificationId, notification]);
 
-  useEffect(() => {
-    if (!showEditAction && mode === 'edit') {
-      setMode('view');
-    }
-  }, [showEditAction, mode]);
-
   const handleSuccess = async (updated?: Notification) => {
     if (updated) setPatchedNotification(updated);
-    setMode('view');
+    setInternalMode('view');
     router.refresh();
   };
 
   const handleCancel = () => {
-    setMode('view');
+    setInternalMode('view');
   };
 
   const title =
@@ -119,7 +119,7 @@ function NotificationEditDrawerContent({
 
   const headerActions =
     mode === 'view' && resolvedNotification && showEditAction ? (
-      <Button type="button" size="sm" variant="outline" onClick={() => setMode('edit')}>
+      <Button type="button" size="sm" variant="outline" onClick={() => setInternalMode('edit')}>
         <IconPencil className="mr-2 h-4 w-4" />
         Edit
       </Button>

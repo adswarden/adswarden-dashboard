@@ -297,6 +297,13 @@ function CampaignAdminDeleteButton({
 export function DeleteButton(props: DeleteButtonProps) {
   const { name, entityType, apiPath, redirectTo } = props;
 
+  const router = useRouter();
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const labels = useMemo(() => entityLabels[entityType], [entityType]);
+
+  useEffect(() => setMounted(true), []);
+
   if (entityType === 'campaign') {
     return (
       <CampaignAdminDeleteButton
@@ -307,13 +314,6 @@ export function DeleteButton(props: DeleteButtonProps) {
       />
     );
   }
-
-  const router = useRouter();
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [mounted, setMounted] = useState(false);
-  const labels = useMemo(() => entityLabels[entityType], [entityType]);
-
-  useEffect(() => setMounted(true), []);
 
   const handleDelete = async () => {
     setIsDeleting(true);

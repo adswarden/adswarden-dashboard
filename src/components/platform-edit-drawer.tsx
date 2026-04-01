@@ -43,7 +43,13 @@ function PlatformEditDrawerContent({
   const [patchedPlatform, setPatchedPlatform] = useState<Platform | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [mode, setMode] = useState<'view' | 'edit'>(showEditAction ? initialMode : 'view');
+  const [internalMode, setInternalMode] = useState<'view' | 'edit'>(
+    showEditAction ? initialMode : 'view'
+  );
+  if (!showEditAction && internalMode === 'edit') {
+    setInternalMode('view');
+  }
+  const mode = showEditAction ? internalMode : 'view';
 
   const resolvedPlatform = patchedPlatform ?? platform ?? fetchedPlatform;
   const displayError = !platform && !platformId ? 'No platform selected' : fetchError;
@@ -87,20 +93,14 @@ function PlatformEditDrawerContent({
     };
   }, [platformId, platform]);
 
-  useEffect(() => {
-    if (!showEditAction && mode === 'edit') {
-      setMode('view');
-    }
-  }, [showEditAction, mode]);
-
   const handleSuccess = async (updated?: Platform) => {
     if (updated) setPatchedPlatform(updated);
-    setMode('view');
+    setInternalMode('view');
     router.refresh();
   };
 
   const handleCancelEdit = () => {
-    setMode('view');
+    setInternalMode('view');
   };
 
   const title =
@@ -114,7 +114,7 @@ function PlatformEditDrawerContent({
 
   const headerActions =
     mode === 'view' && resolvedPlatform && showEditAction ? (
-      <Button type="button" size="sm" variant="outline" onClick={() => setMode('edit')}>
+      <Button type="button" size="sm" variant="outline" onClick={() => setInternalMode('edit')}>
         <IconPencil className="mr-2 h-4 w-4" />
         Edit
       </Button>
