@@ -178,7 +178,8 @@ function AdEditDrawerContent({
                             href={resolvedAd.targetUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-primary underline-offset-4 hover:underline break-all"
+                            title={resolvedAd.targetUrl}
+                            className="block min-w-0 max-w-full truncate text-primary underline-offset-4 hover:underline"
                           >
                             {resolvedAd.targetUrl}
                           </a>
@@ -191,7 +192,10 @@ function AdEditDrawerContent({
                       <dt className={dtClass}>Image URL</dt>
                       <dd className="min-w-0 text-sm">
                         {resolvedAd.imageUrl?.trim() ? (
-                          <span className="inline-flex max-w-full break-all rounded-md border border-border/80 bg-muted/35 px-2 py-1 font-mono text-xs leading-normal text-foreground">
+                          <span
+                            className="inline-block max-w-full truncate rounded-md border border-border/80 bg-muted/35 px-2 py-1 font-mono text-xs leading-normal text-foreground"
+                            title={resolvedAd.imageUrl}
+                          >
                             {resolvedAd.imageUrl}
                           </span>
                         ) : (

@@ -124,12 +124,14 @@ export function AdForm({ ad, mode, onSuccess, onCancel }: AdFormProps) {
           id="imageUrl"
           type="url"
           value={imageUrl}
+          title={imageUrl.trim() ? imageUrl : undefined}
           onChange={(e) => {
             setImageUrl(e.target.value);
             setImagePreviewError(false);
           }}
           placeholder="https://example.com/image.jpg"
           disabled={isLoading}
+          className="truncate"
         />
       </div>
 
@@ -139,9 +141,11 @@ export function AdForm({ ad, mode, onSuccess, onCancel }: AdFormProps) {
           id="targetUrl"
           type="url"
           value={targetUrl}
+          title={targetUrl.trim() ? targetUrl : undefined}
           onChange={(e) => setTargetUrl(e.target.value)}
           placeholder="https://example.com/landing-page"
           disabled={isLoading}
+          className="truncate"
         />
       </div>
 

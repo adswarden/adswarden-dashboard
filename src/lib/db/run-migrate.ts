@@ -2,7 +2,7 @@
  * Runs Drizzle migrations programmatically. Used on app startup and in Docker.
  * Does not import server-only so it can run in instrumentation and standalone.
  */
-import { existsSync, readFileSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
@@ -52,50 +52,6 @@ async function tableExists(client: postgres.Sql, name: string): Promise<boolean>
   return Boolean(rows[0]?.exists);
 }
 
-async function endUsersColumnExists(
-  client: postgres.Sql,
-  columnName: string
-): Promise<boolean> {
-  const rows = await client<{ exists: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_schema = 'public'
-        AND table_name = 'end_users'
-        AND column_name = ${columnName}
-    ) AS "exists"
-  `;
-  return Boolean(rows[0]?.exists);
-}
-
-/**
- * Idempotent SQL from `0002_end_users_identifier_banned.sql`.
- * Runs when `migrate()` did not apply it (journal/hash drift, DB cloned from another line, etc.).
- */
-async function applyEndUsersIdentifierBannedPatch(client: postgres.Sql): Promise<void> {
-  if (!(await tableExists(client, 'end_users'))) {
-    return;
-  }
-  if (await endUsersColumnExists(client, 'identifier')) {
-    return;
-  }
-  const migrationsFolder = resolveMigrationsFolder();
-  const patchPath = path.join(migrationsFolder, '0002_end_users_identifier_banned.sql');
-  if (!existsSync(patchPath)) {
-    console.warn('[migrate] end_users identifier patch not found:', patchPath);
-    return;
-  }
-  const raw = readFileSync(patchPath, 'utf8');
-  const segments = raw
-    .split('--> statement-breakpoint')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  for (const segment of segments) {
-    await client.unsafe(segment);
-  }
-  console.log('[migrate] end_users identifier + banned column patch applied (idempotent)');
-}
-
 async function campaignStatusEnumExists(client: postgres.Sql): Promise<boolean> {
   const rows = await client<{ exists: boolean }[]>`
     SELECT EXISTS (
@@ -121,26 +77,22 @@ async function campaignStatusHasDeletedLabel(client: postgres.Sql): Promise<bool
   return Boolean(rows[0]?.exists);
 }
 
-/**
- * Idempotent SQL from `0003_campaign_status_deleted.sql`.
- * Ensures soft-delete works when Drizzle migrate() skipped this file (hash/journal drift).
- */
-async function applyCampaignStatusDeletedPatch(client: postgres.Sql): Promise<void> {
+/** Idempotent: `campaign_status` must include `deleted` for soft-delete (legacy DBs). */
+async function addCampaignStatusDeletedIfMissing(client: postgres.Sql): Promise<void> {
   if (!(await campaignStatusEnumExists(client))) {
     return;
   }
   if (await campaignStatusHasDeletedLabel(client)) {
     return;
   }
-  const migrationsFolder = resolveMigrationsFolder();
-  const patchPath = path.join(migrationsFolder, '0003_campaign_status_deleted.sql');
-  if (!existsSync(patchPath)) {
-    console.warn('[migrate] campaign_status deleted enum patch not found:', patchPath);
-    return;
-  }
-  const raw = readFileSync(patchPath, 'utf8').trim();
-  await client.unsafe(raw);
-  console.log('[migrate] campaign_status enum: added value deleted (idempotent patch)');
+  await client.unsafe(`
+    DO $$ BEGIN
+      ALTER TYPE "campaign_status" ADD VALUE 'deleted';
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+  console.log('[migrate] campaign_status enum: added value deleted (idempotent)');
 }
 
 let campaignDeletedEnumReadyPromise: Promise<void> | null = null;
@@ -158,7 +110,7 @@ export function ensureCampaignStatusDeletedEnumReady(): Promise<void> {
     const url = normalizeDatabaseUrl(rawUrl);
     const client = postgres(url, { max: 1 });
     try {
-      await applyCampaignStatusDeletedPatch(client);
+      await addCampaignStatusDeletedIfMissing(client);
     } finally {
       await client.end();
     }
@@ -226,8 +178,7 @@ export async function runMigrations(): Promise<void> {
   try {
     await migrate(db, { migrationsFolder });
     console.log('[migrate] Drizzle migrate() finished');
-    await applyEndUsersIdentifierBannedPatch(client);
-    await applyCampaignStatusDeletedPatch(client);
+    await addCampaignStatusDeletedIfMissing(client);
   } finally {
     await client.end();
   }
