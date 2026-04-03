@@ -1,5 +1,5 @@
 {
-  "id": "1cc7fbe9-85e8-408d-a888-a57997dce9d7",
+  "id": "2ae660b0-2db9-4c62-921e-5cf0901b1e91",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -436,17 +436,11 @@
           "primaryKey": false,
           "notNull": false
         },
-        "installation_id": {
-          "name": "installation_id",
+        "identifier": {
+          "name": "identifier",
           "type": "varchar(255)",
           "primaryKey": false,
           "notNull": false
-        },
-        "short_id": {
-          "name": "short_id",
-          "type": "varchar(12)",
-          "primaryKey": false,
-          "notNull": true
         },
         "name": {
           "name": "name",
@@ -462,13 +456,12 @@
           "notNull": true,
           "default": "'trial'"
         },
-        "status": {
-          "name": "status",
-          "type": "enduser_status",
-          "typeSchema": "public",
+        "banned": {
+          "name": "banned",
+          "type": "boolean",
           "primaryKey": false,
           "notNull": true,
-          "default": "'active'"
+          "default": false
         },
         "country": {
           "name": "country",
@@ -515,18 +508,11 @@
             "email"
           ]
         },
-        "end_users_installation_id_unique": {
-          "name": "end_users_installation_id_unique",
+        "end_users_identifier_unique": {
+          "name": "end_users_identifier_unique",
           "nullsNotDistinct": false,
           "columns": [
-            "installation_id"
-          ]
-        },
-        "end_users_short_id_unique": {
-          "name": "end_users_short_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "short_id"
+            "identifier"
           ]
         }
       },
@@ -1367,7 +1353,8 @@
         "active",
         "inactive",
         "scheduled",
-        "expired"
+        "expired",
+        "deleted"
       ]
     },
     "public.campaign_type": {
@@ -1398,15 +1385,6 @@
       "values": [
         "trial",
         "paid"
-      ]
-    },
-    "public.enduser_status": {
-      "name": "enduser_status",
-      "schema": "public",
-      "values": [
-        "active",
-        "suspended",
-        "churned"
       ]
     },
     "public.frequency_type": {

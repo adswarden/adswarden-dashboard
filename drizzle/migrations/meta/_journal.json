@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1743177600000,
-      "tag": "0000_squashed",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1743225600000,
-      "tag": "0001_end_users_short_id_status_legacy",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1743302400000,
-      "tag": "0002_end_users_identifier_banned",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1743388800000,
-      "tag": "0003_campaign_status_deleted",
+      "when": 1775211051358,
+      "tag": "0000_initial",
       "breakpoints": true
     }
   ]

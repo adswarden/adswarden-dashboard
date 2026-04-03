@@ -1,8 +1,7 @@
-CREATE TYPE "public"."campaign_status" AS ENUM('active', 'inactive', 'scheduled', 'expired');--> statement-breakpoint
+CREATE TYPE "public"."campaign_status" AS ENUM('active', 'inactive', 'scheduled', 'expired', 'deleted');--> statement-breakpoint
 CREATE TYPE "public"."campaign_type" AS ENUM('ads', 'popup', 'notification', 'redirect');--> statement-breakpoint
 CREATE TYPE "public"."enduser_event_type" AS ENUM('ad', 'notification', 'popup', 'request', 'redirect', 'visit');--> statement-breakpoint
 CREATE TYPE "public"."enduser_user_plan" AS ENUM('trial', 'paid');--> statement-breakpoint
-CREATE TYPE "public"."enduser_status" AS ENUM('active', 'suspended', 'churned');--> statement-breakpoint
 CREATE TYPE "public"."frequency_type" AS ENUM('full_day', 'time_based', 'only_once', 'always', 'specific_count');--> statement-breakpoint
 CREATE TYPE "public"."payment_status" AS ENUM('pending', 'completed', 'failed', 'refunded');--> statement-breakpoint
 CREATE TYPE "public"."target_audience" AS ENUM('new_users', 'all_users');--> statement-breakpoint
@@ -60,19 +59,17 @@ CREATE TABLE "end_users" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"email" varchar(255),
 	"password_hash" varchar(255),
-	"installation_id" varchar(255),
-	"short_id" varchar(12) NOT NULL,
+	"identifier" varchar(255),
 	"name" varchar(255),
 	"plan" "enduser_user_plan" DEFAULT 'trial' NOT NULL,
-	"status" "enduser_status" DEFAULT 'active' NOT NULL,
+	"banned" boolean DEFAULT false NOT NULL,
 	"country" varchar(2),
 	"start_date" timestamp with time zone DEFAULT now() NOT NULL,
 	"end_date" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "end_users_email_unique" UNIQUE("email"),
-	CONSTRAINT "end_users_installation_id_unique" UNIQUE("installation_id"),
-	CONSTRAINT "end_users_short_id_unique" UNIQUE("short_id")
+	CONSTRAINT "end_users_identifier_unique" UNIQUE("identifier")
 );
 --> statement-breakpoint
 CREATE TABLE "enduser_events" (

@@ -7,6 +7,11 @@ import { config } from 'dotenv';
 config({ path: '.env.local' });
 
 export async function seedAdmin(): Promise<void> {
+  console.log();
+  console.log('Seeding admin user');
+  console.log('ADMIN_EMAIL', process.env.ADMIN_EMAIL);
+  console.log('ADMIN_PASSWORD', process.env.ADMIN_PASSWORD);
+  console.log('NODE_ENV', process.env.NODE_ENV);
   const email = process.env.ADMIN_EMAIL || 'admin@admin.com';
   const password = process.env.ADMIN_PASSWORD || 'passwordis80';
 
