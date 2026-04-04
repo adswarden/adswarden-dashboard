@@ -9,6 +9,16 @@ const REALTIME_COUNT_CHANNEL = 'realtime:connection_count';
 const EXTENSION_PLATFORMS_KEY = 'extension:platforms:list';
 const EXTENSION_PLATFORMS_TTL_SEC = 60;
 
+/** Atomically DECR connection count and floor stored value at 0 (avoids negative keys in Redis). */
+const DECR_CONNECTION_COUNT_LUA = `
+local v = redis.call('DECR', KEYS[1])
+if v < 0 then
+  redis.call('SET', KEYS[1], '0')
+  return 0
+end
+return v
+`;
+
 export { REALTIME_CHANNEL, REALTIME_COUNT_KEY, REALTIME_COUNT_CHANNEL };
 export type CachedPlatformRow = { id: string; domain: string };
 
@@ -188,12 +198,15 @@ export async function publishConnectionCount(count: number): Promise<void> {
 
 /**
  * Increment the live connection count. Returns the new count, or 0 if Redis unavailable.
+ * Publishes the new count for dashboard SSE subscribers.
  */
 export async function incrConnectionCount(): Promise<number> {
   const client = await getRedisClient();
   if (!client) return 0;
   try {
-    return await client.incr(REALTIME_COUNT_KEY);
+    const count = await client.incr(REALTIME_COUNT_KEY);
+    await publishConnectionCount(count);
+    return count;
   } catch {
     return 0;
   }
@@ -201,13 +214,19 @@ export async function incrConnectionCount(): Promise<number> {
 
 /**
  * Decrement the live connection count. Returns the new count, or 0 if Redis unavailable.
+ * Stored Redis value never goes below 0 (Lua script). Publishes the new count for dashboard SSE.
  */
 export async function decrConnectionCount(): Promise<number> {
   const client = await getRedisClient();
   if (!client) return 0;
   try {
-    const count = await client.decr(REALTIME_COUNT_KEY);
-    return Math.max(0, count);
+    const raw = await client.eval(DECR_CONNECTION_COUNT_LUA, {
+      keys: [REALTIME_COUNT_KEY],
+    });
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    const count = Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+    await publishConnectionCount(count);
+    return count;
   } catch {
     return 0;
   }
@@ -221,7 +240,9 @@ export async function getConnectionCount(): Promise<number> {
   if (!client) return 0;
   try {
     const value = await client.get(REALTIME_COUNT_KEY);
-    return value ? parseInt(value, 10) : 0;
+    if (!value) return 0;
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
   } catch {
     return 0;
   }
