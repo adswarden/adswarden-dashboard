@@ -1,12 +1,29 @@
 # Extension API Documentation
 
-This document contains the API endpoint for browser extensions to fetch ads and notifications with automatic visit logging.
+## v2 (recommended)
+
+Use **[EXTENSION_V2_API.md](./EXTENSION_V2_API.md)** for the current architecture:
+
+- **`GET /api/extension/live`** — SSE: `init` payload (`platforms`, `campaigns`, `frequencyCounts`, …) + realtime updates (requires **Bearer** or **`?token=`**).
+- **`POST /api/extension/serve/ads`** — per-visit **ads, popups**, and **server-matched redirects** (Bearer); logs `ad` / `popup` / `redirect` (or `request` if nothing served). Does **not** log **`visit`**.
+- **`POST /api/extension/events`** — client-reported **`visit`** (batched 5–10 per flush, optional `visitedAt`), **notification**, and **redirect** (client-only deliveries) (Bearer).
+- Legacy **`POST /api/extension/ad-block`** — unchanged; still supported.
+
+**Authentication:** Extension end users use **`POST /api/extension/auth/register`** and **`POST /api/extension/auth/login`**, then **`Authorization: Bearer <token>`** on REST routes. **`GET /api/extension/domains`** remains public (optional; v2 `init` includes domain data).
+
+Do **not** use `/api/notifications` (admin UI / Better Auth) for the extension.
+
+---
+
+## Legacy: single ad-block endpoint
+
+This document below focuses on **`POST /api/extension/ad-block`** — fetch ads and/or notifications with automatic visit logging.
 
 **Base URL:** `https://your-admin-dashboard-domain.com` (paths are relative, e.g. `/api/extension/ad-block`)
 
-> **Note**: For the full reference including `/api/extension/ad-block` (with `requestType: "notification"` for notifications), `/api/extension/live` (SSE), and recommended flow, see [EXTENSION_API_REFERENCE.md](./EXTENSION_API_REFERENCE.md). For a compact cheat sheet, see [EXTENSION_AD_BLOCK_API.md](./EXTENSION_AD_BLOCK_API.md).
+> **Note**: Older references to [EXTENSION_API_REFERENCE.md](./EXTENSION_API_REFERENCE.md) / [EXTENSION_AD_BLOCK_API.md](./EXTENSION_AD_BLOCK_API.md) may be stale; prefer **EXTENSION_V2_API.md** for new work.
 
-**Authentication:** All extension endpoints (`/api/extension/*`) are **public** — no authentication required. Do **not** use `/api/notifications`; that is the admin dashboard API and requires an authenticated session. For notifications on extension load, use `POST /api/extension/ad-block` with `{ visitorId, requestType: "notification" }`. No domain needed.
+**Authentication:** **`POST /api/extension/ad-block` requires a session token.** End users register and sign in as above, then send `Authorization: Bearer <token>` on ad-block requests.
 
 ---
 
@@ -29,11 +46,17 @@ This document contains the API endpoint for browser extensions to fetch ads and 
 POST /api/extension/ad-block
 ```
 
+### Headers
+
+| Header | Required | Value |
+|--------|----------|--------|
+| `Content-Type` | Yes | `application/json` |
+| `Authorization` | Yes | `Bearer <token>` from `POST /api/extension/auth/login` |
+
 ### Request Body
 
 ```json
 {
-  "visitorId": "unique-visitor-fingerprint",
   "domain": "example.com",
   "requestType": "ad"
 }
@@ -43,9 +66,11 @@ POST /api/extension/ad-block
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `visitorId` | string | Yes | Unique identifier for the user (fingerprint/hash) |
-| `domain` | string | For ads | Domain where the request originated. **Required when requesting ads**; omit when `requestType: "notification"` only. Supports normalization: `instagram.com`, `www.instagram.com`, etc. |
-| `requestType` | string | No | Either `"ad"` or `"notification"`. If omitted, returns both ads and notifications and logs both. |
+| `domain` | string | For ads | **Required when requesting ads**; omit when `requestType: "notification"` only. |
+| `requestType` | string | No | `"ad"` or `"notification"`. If omitted, returns both (domain required for ads). |
+| `userAgent` | string | No | Optional telemetry. |
+
+User id, email, and plan are **not** sent in the body; they come from the `end_users` row tied to the Bearer token.
 
 ### Response
 
@@ -82,26 +107,23 @@ POST /api/extension/ad-block
 - If `requestType` is omitted, both arrays may contain items.
 - Public fields only: no internal IDs, status, or date ranges.
 
-### Visit Logging
+### Visit logging
 
-This endpoint automatically logs visits:
-- When `requestType` is `"ad"`: One log entry with `requestType: "ad"`, `totalRequests` incremented by 1.
-- When `requestType` is `"notification"`: One log entry with `requestType: "notification"`, `totalRequests` incremented by 1.
-- When `requestType` is omitted: Two log entries (one for "ad", one for "notification"), `totalRequests` incremented by 2.
+The server writes **`enduser_events`** rows (and may update **`end_users`** e.g. country from edge headers). There is no separate log endpoint.
 
 ### Example Request
 
 ```javascript
 const BASE_URL = 'https://your-admin-dashboard-domain.com';
 
-// Get both ads and notifications (recommended)
+// After login: const token = ...
 const response = await fetch(`${BASE_URL}/api/extension/ad-block`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
   },
   body: JSON.stringify({
-    visitorId: 'user-fingerprint-hash',
     domain: window.location.hostname,
     // requestType omitted = get both
   }),
@@ -116,9 +138,9 @@ const response = await fetch(`${BASE_URL}/api/extension/ad-block`, {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
+    Authorization: `Bearer ${token}`,
   },
   body: JSON.stringify({
-    visitorId: 'user-fingerprint-hash',
     domain: window.location.hostname,
     requestType: 'ad',
   }),
@@ -174,75 +196,61 @@ interface PublicNotification {
 // Configuration
 const API_BASE_URL = 'https://your-admin-dashboard-domain.com';
 
-// Get current domain
 function getCurrentDomain() {
   return window.location.hostname;
 }
 
-// Generate or retrieve visitor fingerprint
-async function getVisitorId() {
-  // Use your fingerprinting library or generate a persistent ID
-  // Example: Use localStorage to store a generated UUID
-  let visitorId = localStorage.getItem('extension_visitor_id');
-  if (!visitorId) {
-    visitorId = crypto.randomUUID();
-    localStorage.setItem('extension_visitor_id', visitorId);
-  }
-  return visitorId;
+async function getStoredToken() {
+  return localStorage.getItem('extension_auth_token');
 }
 
-// Fetch ads and notifications (recommended: single call)
-async function fetchAdBlock(requestType) {
+async function loginAndStoreToken(email, password) {
+  const res = await fetch(`${API_BASE_URL}/api/extension/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) throw new Error('Login failed');
+  const { token } = await res.json();
+  localStorage.setItem('extension_auth_token', token);
+  return token;
+}
+
+async function fetchAdBlock(token, requestType) {
   try {
-    const visitorId = await getVisitorId();
     const domain = getCurrentDomain();
-    
-    const body = {
-      visitorId,
-      domain,
-    };
-    
-    // Optional: specify requestType if you only want ads or notifications
-    if (requestType) {
-      body.requestType = requestType; // 'ad' or 'notification'
-    }
-    
+    const body = { domain };
+    if (requestType) body.requestType = requestType;
+
     const response = await fetch(`${API_BASE_URL}/api/extension/ad-block`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(body),
     });
-    
+
     if (!response.ok) {
       throw new Error(`Failed to fetch ad block: ${response.status}`);
     }
-    
-    const { ads, notifications } = await response.json();
-    // Visit logging is automatic - no separate log call needed!
-    return { ads, notifications };
+
+    return await response.json();
   } catch (error) {
     console.error('Error fetching ad block:', error);
     return { ads: [], notifications: [] };
   }
 }
 
-// Main function to fetch and display content
 async function loadExtensionContent() {
-  // Single call fetches both ads and notifications, and logs both visits
-  const { ads, notifications } = await fetchAdBlock();
-  // Omit requestType to get both, or use 'ad' or 'notification' for specific types
-  
-  // Display ads
-  if (ads.length > 0) {
-    displayAds(ads);
+  let token = await getStoredToken();
+  if (!token) {
+    // Prompt user or open /register — example only:
+    token = await loginAndStoreToken('user@example.com', 'password');
   }
-  
-  // Display notifications
-  if (notifications.length > 0) {
-    displayNotifications(notifications);
-  }
+  const { ads, notifications } = await fetchAdBlock(token);
+  if (ads.length > 0) displayAds(ads);
+  if (notifications.length > 0) displayNotifications(notifications);
 }
 
 // Display ads in the extension
@@ -345,10 +353,7 @@ async function fetchWithErrorHandling(url) {
    - Cache ads/notifications for a short period (e.g., 5-10 minutes)
    - Invalidate cache when user navigates to a new domain
 
-4. **Privacy**: The `visitorId` should be a persistent but anonymous identifier. Consider using:
-   - Browser fingerprinting
-   - localStorage-based UUID
-   - Extension-specific user ID
+4. **Accounts**: End users register and sign in; store the **session token** securely (not a client-generated `endUserId`).
 
 5. **CORS**: Ensure your admin dashboard CORS settings allow requests from your extension's origin.
 
@@ -371,10 +376,10 @@ Or run directly:
 ```
 
 The script will:
+- Log in with `EXTENSION_EMAIL` / `EXTENSION_PASSWORD` to obtain a Bearer token
 - Fetch real platforms from your database
-- Call the ad-block endpoint to get ads and notifications
-- Automatically log visits (no separate log calls needed)
-- Display results and provide links to view in the Analytics dashboard
+- Call the ad-block endpoint with `Authorization: Bearer`
+- Display results and sample curl commands
 
 See [TEST_EXTENSION_LOG.md](./TEST_EXTENSION_LOG.md) for detailed documentation.
 
@@ -390,6 +395,9 @@ See [TEST_EXTENSION_LOG.md](./TEST_EXTENSION_LOG.md) for detailed documentation.
 - Consolidated to single `/api/extension/ad-block` endpoint
 - Removed separate GET endpoints for extension use
 - Automatic visit logging integrated into ad-block endpoint
+
+### 2026-03-25
+- **Breaking:** Ad-block requires **`Authorization: Bearer`** (extension user login). Body no longer includes `endUserId` / email / plan. See `EXTENSION_API_REFERENCE.md`.
 
 ---
 

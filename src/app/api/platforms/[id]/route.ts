@@ -50,9 +50,9 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const { id } = await context.params;
     const body = await request.json();
-    const { name, domain, isActive } = body;
+    const { name, domain } = body as { name?: unknown; domain?: unknown };
 
-    if (!name || !domain) {
+    if (typeof name !== 'string' || typeof domain !== 'string' || !name || !domain) {
       return NextResponse.json(
         { error: 'Name and domain are required' },
         { status: 400 }
@@ -94,7 +94,6 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       .set({
         name,
         domain: normalizedDomain,
-        isActive: isActive ?? true,
         updatedAt: new Date(),
       })
       .where(eq(platforms.id, id))

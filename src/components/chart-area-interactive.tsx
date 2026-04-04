@@ -3,10 +3,8 @@
 import * as React from "react"
 import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
 
-import { useIsMobile } from "@/hooks/use-mobile"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -25,28 +23,39 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
-
-export const description = "An interactive area chart with extension request data"
+import { cn } from "@/lib/utils"
 
 interface ChartDataPoint {
   date: string
   ad: number
+  popup: number
   notification: number
+  redirect: number
 }
 
+/** Stacked bottom → top: notification, ad, popup, redirect — theme chart-5…2 ramp (violet, matches primary). */
 const chartConfig = {
-  ad: {
-    label: "Ad requests",
-    color: "var(--primary)",
-  },
   notification: {
-    label: "Notification requests",
-    color: "var(--primary)",
+    label: "Notification",
+    color: "var(--chart-5)",
+  },
+  ad: {
+    label: "Ad",
+    color: "var(--chart-4)",
+  },
+  popup: {
+    label: "Popup",
+    color: "var(--chart-3)",
+  },
+  redirect: {
+    label: "Redirect",
+    color: "var(--chart-2)",
   },
 } satisfies ChartConfig
 
@@ -56,27 +65,35 @@ const rangeLabels: Record<string, string> = {
   "7d": "Last 7 days",
 }
 
-export function ChartAreaInteractive() {
-  const isMobile = useIsMobile()
+function isAllZeroChartData(data: ChartDataPoint[]) {
+  return data.every(
+    (d) =>
+      d.ad === 0 &&
+      d.popup === 0 &&
+      d.notification === 0 &&
+      d.redirect === 0
+  )
+}
+
+export interface ChartAreaInteractiveProps {
+  className?: string
+}
+
+export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
   const [mounted, setMounted] = React.useState(false)
-  const [timeRange, setTimeRange] = React.useState("90d")
+  const [timeRange, setTimeRange] = React.useState("7d")
   const [chartData, setChartData] = React.useState<ChartDataPoint[]>([])
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
+  const [retryKey, setRetryKey] = React.useState(0)
 
   React.useEffect(() => setMounted(true), [])
-
-  React.useEffect(() => {
-    if (isMobile) {
-      setTimeRange("7d")
-    }
-  }, [isMobile])
 
   React.useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
-    fetch(`/api/analytics/chart?range=${timeRange}`)
+    fetch(`/api/events/chart?range=${timeRange}`)
       .then((res) => {
         if (!res.ok) throw new Error("Failed to fetch chart data")
         return res.json()
@@ -100,21 +117,29 @@ export function ChartAreaInteractive() {
     return () => {
       cancelled = true
     }
-  }, [timeRange])
+  }, [timeRange, retryKey])
 
-  const descriptionText = rangeLabels[timeRange] ?? "Last 3 months"
+  const descriptionText = rangeLabels[timeRange] ?? "Last 7 days"
 
   return (
-    <Card className="@container/card">
-      <CardHeader>
-        <CardTitle>Extension requests</CardTitle>
-        <CardDescription>
-          <span className="hidden @[540px]/card:block">
-            Ad and notification requests from the extension — {descriptionText.toLowerCase()}
-          </span>
-          <span className="@[540px]/card:hidden">{descriptionText}</span>
-        </CardDescription>
-        <CardAction>
+    <Card
+      className={cn(
+        "@container/card relative z-0 border-border bg-card/40 py-4 shadow-none overflow-hidden",
+        className
+      )}
+    >
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between space-y-0 pb-2">
+        <div className="space-y-1">
+          <CardTitle className="text-sm font-medium">Extension events</CardTitle>
+          <CardDescription className="text-xs leading-relaxed">
+            <span className="hidden @[540px]/card:block">
+              Campaign-linked events by type: ad, popup, notification, and redirect —{" "}
+              {descriptionText.toLowerCase()}
+            </span>
+            <span className="@[540px]/card:hidden">{descriptionText}</span>
+          </CardDescription>
+        </div>
+        <div className="flex items-center justify-start sm:justify-end">
           {mounted ? (
             <>
               <ToggleGroup
@@ -134,7 +159,7 @@ export function ChartAreaInteractive() {
                   size="sm"
                   aria-label="Select time range"
                 >
-                  <SelectValue placeholder="Last 3 months" />
+                  <SelectValue placeholder="Last 7 days" />
                 </SelectTrigger>
                 <SelectContent className="rounded-xl">
                   <SelectItem value="90d" className="rounded-lg">
@@ -150,25 +175,48 @@ export function ChartAreaInteractive() {
               </Select>
             </>
           ) : (
-            <span className="text-sm text-muted-foreground">{rangeLabels[timeRange] ?? "Last 3 months"}</span>
+            <span className="text-xs text-muted-foreground">
+              {rangeLabels[timeRange] ?? "Last 7 days"}
+            </span>
           )}
-        </CardAction>
+        </div>
       </CardHeader>
-      <CardContent className="px-2 pt-4 sm:px-6 sm:pt-6">
+      <CardContent className="pt-0 px-2 sm:px-6">
         {loading ? (
-          <Skeleton className="h-[250px] w-full rounded-lg" />
+          <Skeleton className="h-[264px] w-full rounded-lg" />
         ) : error ? (
-          <div className="flex h-[250px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-            {error}
+          <div
+            className="flex h-[264px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-4 text-center"
+            role="alert"
+          >
+            <p className="text-sm text-muted-foreground">{error}</p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setRetryKey((k) => k + 1)}
+            >
+              Retry
+            </Button>
           </div>
         ) : chartData.length === 0 ? (
-          <div className="flex h-[250px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground">
-            No request data for this period
+          <div
+            className="flex h-[264px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
+            role="status"
+          >
+            No event data for this period
+          </div>
+        ) : isAllZeroChartData(chartData) ? (
+          <div
+            className="flex h-[264px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
+            role="status"
+          >
+            No event data for this period
           </div>
         ) : (
           <ChartContainer
             config={chartConfig}
-            className="aspect-auto h-[250px] w-full"
+            className="aspect-auto h-[264px] w-full"
           >
             <AreaChart data={chartData}>
               <defs>
@@ -184,6 +232,18 @@ export function ChartAreaInteractive() {
                     stopOpacity={0.1}
                   />
                 </linearGradient>
+                <linearGradient id="fillPopup" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="5%"
+                    stopColor="var(--color-popup)"
+                    stopOpacity={0.9}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor="var(--color-popup)"
+                    stopOpacity={0.1}
+                  />
+                </linearGradient>
                 <linearGradient id="fillNotification" x1="0" y1="0" x2="0" y2="1">
                   <stop
                     offset="5%"
@@ -193,6 +253,18 @@ export function ChartAreaInteractive() {
                   <stop
                     offset="95%"
                     stopColor="var(--color-notification)"
+                    stopOpacity={0.1}
+                  />
+                </linearGradient>
+                <linearGradient id="fillRedirect" x1="0" y1="0" x2="0" y2="1">
+                  <stop
+                    offset="5%"
+                    stopColor="var(--color-redirect)"
+                    stopOpacity={0.85}
+                  />
+                  <stop
+                    offset="95%"
+                    stopColor="var(--color-redirect)"
                     stopOpacity={0.1}
                   />
                 </linearGradient>
@@ -238,6 +310,20 @@ export function ChartAreaInteractive() {
                 type="natural"
                 fill="url(#fillAd)"
                 stroke="var(--color-ad)"
+                stackId="a"
+              />
+              <Area
+                dataKey="popup"
+                type="natural"
+                fill="url(#fillPopup)"
+                stroke="var(--color-popup)"
+                stackId="a"
+              />
+              <Area
+                dataKey="redirect"
+                type="natural"
+                fill="url(#fillRedirect)"
+                stroke="var(--color-redirect)"
                 stackId="a"
               />
             </AreaChart>

@@ -1,6 +1,8 @@
 import { redirect } from 'next/navigation';
 import { getSessionWithRole } from '@/lib/dal';
+import { ensureRedirectsSchemaOnce } from '@/lib/db/run-migrate';
 import { AppSidebar } from '@/components/app-sidebar';
+import { DateDisplayPreferenceProvider } from '@/components/date-display-preference';
 import { SiteHeader } from '@/components/site-header';
 import { KBarProviderWrapper } from '@/components/kbar-provider';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
@@ -16,6 +18,8 @@ export default async function ProtectedLayout({
     redirect('/login?reason=unauthorized');
   }
 
+  await ensureRedirectsSchemaOnce();
+
   const { user, role } = sessionWithRole;
 
   return (
@@ -28,12 +32,20 @@ export default async function ProtectedLayout({
           } as React.CSSProperties
         }
       >
-        <AppSidebar variant="inset" user={{ name: user.name ?? 'User', email: user.email, avatar: user.image ?? undefined }} role={role} />
+        <AppSidebar
+          variant="inset"
+          user={{
+            name: user.name ?? "User",
+            email: user.email,
+            avatar: user.image ?? undefined,
+          }}
+          role={role}
+        />
         <SidebarInset>
           <SiteHeader />
           <div className="flex flex-1 flex-col min-h-0">
             <div className="@container/main scrollbar-thin flex flex-1 flex-col gap-2 min-h-0 overflow-y-auto">
-              {children}
+              <DateDisplayPreferenceProvider>{children}</DateDisplayPreferenceProvider>
             </div>
           </div>
         </SidebarInset>

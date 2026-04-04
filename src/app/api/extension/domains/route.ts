@@ -1,24 +1,20 @@
 import { NextResponse } from 'next/server';
 import { database as db } from '@/db';
 import { platforms } from '@/db/schema';
-import { eq } from 'drizzle-orm';
 import { getCanonicalDisplayDomain } from '@/lib/domain-utils';
 
 /**
  * GET /api/extension/domains
  *
  * Public API - no auth required.
- * Returns all active target domains where the extension will load ads and notifications.
+ * Returns all target domains where the extension will load ads and notifications.
  * Use this to know which domains to make ad-block requests for.
  *
  * Response: { "domains": ["instagram.com", "youtube.com", ...] }
  */
 export async function GET() {
   try {
-    const rows = await db
-      .select({ domain: platforms.domain })
-      .from(platforms)
-      .where(eq(platforms.isActive, true));
+    const rows = await db.select({ domain: platforms.domain }).from(platforms);
 
     const domains = rows
       .map((r) => (r.domain ?? '').trim())

@@ -1,8 +1,3 @@
-'use client';
-
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
 import {
   Table,
   TableBody,
@@ -12,180 +7,151 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { EndUserRowActions } from '@/components/end-user-row-actions';
+import { HumanReadableDate } from '@/components/human-readable-date';
+import { UserIdentityCell } from '@/components/user-identity-cell';
+import type { EndUserListRow } from '@/lib/end-users-dashboard';
+import type { ExtensionPlanValue } from '@/lib/extension-user-subscription';
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { IconPencil, IconTrash, IconLoader2 } from '@tabler/icons-react';
-import { EditUserDialog } from '@/components/edit-user-dialog';
-import { authClient } from '@/lib/auth-client';
-import { toast } from 'sonner';
+  computeExtensionDaysLeft,
+  computeTrialEndDateFromStart,
+  formatExtensionDaysLeftCell,
+} from '@/lib/extension-user-subscription';
+import { cn } from '@/lib/utils';
 
-interface UserRow {
-  id: string;
-  email: string;
-  name: string | null;
-  role: string;
-  banned?: boolean;
-  createdAt: Date;
+function rowPlan(plan: string): ExtensionPlanValue {
+  return plan === 'paid' ? 'paid' : 'trial';
+}
+
+/** One rhythm for every header and cell — browsers size columns from content. */
+const cell = 'px-2 py-2 align-middle';
+
+/**
+ * On `w-full` auto tables, very short values (—, 0) otherwise pull apart neighbors.
+ * `w-[1%]` is a well-supported “stay content-sized” hint, not a fixed pixel gutter.
+ */
+const tightCol = 'w-[1%] whitespace-nowrap';
+
+function daysLeftLabel(formatted: string): string {
+  if (formatted === '—') return '—';
+  const n = parseInt(formatted, 10);
+  if (!Number.isFinite(n)) return formatted;
+  return `${n}\u00a0${n === 1 ? 'day' : 'days'}`;
 }
 
 interface UsersTableProps {
-  users: UserRow[];
-  currentUserId?: string;
+  rows: EndUserListRow[];
+  isAdmin?: boolean;
 }
 
-export function UsersTable({ users, currentUserId }: UsersTableProps) {
-  const router = useRouter();
-  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
-  const [editOpen, setEditOpen] = useState(false);
-  const [deletingUser, setDeletingUser] = useState<UserRow | null>(null);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
-
-  const openEdit = (user: UserRow) => {
-    setEditingUser(user);
-    setEditOpen(true);
-  };
-
-  const openDelete = (user: UserRow) => {
-    setDeletingUser(user);
-    setDeleteOpen(true);
-  };
-
-  const handleDelete = async () => {
-    if (!deletingUser) return;
-    setIsDeleting(true);
-    try {
-      const result = await authClient.admin.removeUser({ userId: deletingUser.id });
-      if (result.error) {
-        throw new Error(result.error.message);
-      }
-      toast.success('User deleted');
-      setDeleteOpen(false);
-      setDeletingUser(null);
-      router.refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed to delete user');
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+export function UsersTable({ rows, isAdmin = false }: UsersTableProps) {
+  const colCount = 10;
 
   return (
-    <>
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
+    <div className="w-full overflow-x-auto">
+      <Table className="w-full">
+        <TableHeader>
+          <TableRow>
+            <TableHead className={cn(cell, 'text-left font-medium')}>User</TableHead>
+            <TableHead className={cn(cell, 'font-medium')}>Plan</TableHead>
+            <TableHead className={cn(cell, 'font-medium')}>Banned</TableHead>
+            <TableHead className={cn(cell, tightCol, 'font-medium')}>Country</TableHead>
+            <TableHead className={cn(cell, tightCol, 'text-right font-medium tabular-nums')}>
+              Impressions
+            </TableHead>
+            <TableHead className={cn(cell, 'text-left font-medium')}>Start date</TableHead>
+            <TableHead className={cn(cell, 'text-left font-medium')}>End date</TableHead>
+            <TableHead className={cn(cell, 'text-left font-medium')}>Last session</TableHead>
+            <TableHead className={cn(cell, 'text-right font-medium tabular-nums')}>Days left</TableHead>
+            <TableHead className={cn(cell, 'text-right font-medium')}>Actions</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.length === 0 ? (
             <TableRow>
-              <TableHead>Email</TableHead>
-              <TableHead>Name</TableHead>
-              <TableHead>Role</TableHead>
-              <TableHead>Banned</TableHead>
-              <TableHead>Created</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
+              <TableCell colSpan={colCount} className="text-center py-12 text-muted-foreground">
+                No users match your filters. Try adjusting your filters or removing them.
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {users.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
-                  No users yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              users.map((u) => (
-                <TableRow
-                  key={u.id}
-                  className="cursor-pointer hover:bg-muted/50"
-                  onClick={() => openEdit(u)}
-                >
-                  <TableCell className="font-medium">{u.email}</TableCell>
-                  <TableCell>{u.name ?? '-'}</TableCell>
-                  <TableCell>
-                    <Badge variant={u.role === 'admin' ? 'default' : 'secondary'}>
-                      {u.role}
+          ) : (
+            rows.map((v) => {
+              const plan = rowPlan(v.plan);
+              const inferredEnd =
+                v.endDate == null && plan === 'trial'
+                  ? computeTrialEndDateFromStart(v.startDate)
+                  : null;
+              const effectiveEndDate = v.endDate ?? inferredEnd;
+              const daysLeft = formatExtensionDaysLeftCell(
+                computeExtensionDaysLeft({
+                  endDate: v.endDate,
+                  plan,
+                  startDate: v.startDate,
+                })
+              );
+              return (
+                <TableRow key={v.id} className={cn(v.banned && 'bg-destructive/5')}>
+                  <TableCell className={cn(cell, 'min-w-0')}>
+                    <UserIdentityCell
+                      endUserId={v.id}
+                      identifier={v.identifier}
+                      displayEmail={v.email}
+                      displayName={v.name}
+                    />
+                  </TableCell>
+                  <TableCell className={cn(cell, 'whitespace-nowrap capitalize text-sm')}>
+                    {v.plan}
+                  </TableCell>
+                  <TableCell className={cell}>
+                    <Badge variant={v.banned ? 'destructive' : 'secondary'} className="font-normal">
+                      {v.banned ? 'Yes' : 'No'}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    {u.banned ? (
-                      <Badge variant="destructive">Yes</Badge>
+                  <TableCell className={cn(cell, tightCol)}>
+                    {v.country ? (
+                      <span className="uppercase">{v.country}</span>
                     ) : (
-                      <span className="text-muted-foreground">No</span>
+                      <span className="text-muted-foreground">—</span>
                     )}
                   </TableCell>
-                  <TableCell>{new Date(u.createdAt).toLocaleString()}</TableCell>
-                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                    <div className="flex items-center justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(u)} title="Edit user">
-                        <IconPencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => openDelete(u)}
-                        title="Delete user"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                      >
-                        <IconTrash className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <TableCell className={cn(cell, tightCol, 'text-right tabular-nums text-sm')}>
+                    {v.impressionCount}
+                  </TableCell>
+                  <TableCell className={cn(cell, 'text-sm text-muted-foreground whitespace-normal')}>
+                    <HumanReadableDate date={new Date(v.startDate)} />
+                  </TableCell>
+                  <TableCell className={cn(cell, 'text-sm text-muted-foreground whitespace-normal')}>
+                    {effectiveEndDate ? (
+                      <HumanReadableDate date={new Date(effectiveEndDate)} />
+                    ) : (
+                      <span>—</span>
+                    )}
+                  </TableCell>
+                  <TableCell className={cn(cell, 'text-sm text-muted-foreground whitespace-normal')}>
+                    {v.lastSessionAt ? (
+                      <HumanReadableDate date={new Date(v.lastSessionAt)} />
+                    ) : (
+                      <span>—</span>
+                    )}
+                  </TableCell>
+                  <TableCell
+                    className={cn(cell, 'text-right tabular-nums text-sm text-muted-foreground')}
+                  >
+                    {daysLeftLabel(daysLeft)}
+                  </TableCell>
+                  <TableCell className={cn(cell, 'text-right whitespace-nowrap')}>
+                    <EndUserRowActions
+                      userId={v.id}
+                      email={v.email}
+                      identifier={v.identifier}
+                      canDelete={isAdmin}
+                    />
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
-      <EditUserDialog
-        user={editingUser}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-      />
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete user</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deletingUser?.id === currentUserId ? (
-                <>
-                  You are about to delete your own account ({deletingUser?.email}). You will be signed out immediately and will need to create a new account to access the dashboard again. This action cannot be undone.
-                </>
-              ) : (
-                <>
-                  Are you sure you want to delete {deletingUser?.email}? This action cannot be undone.
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleDelete();
-              }}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting ? (
-                <>
-                  <IconLoader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                'Delete'
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+              );
+            })
+          )}
+        </TableBody>
+      </Table>
+    </div>
   );
 }

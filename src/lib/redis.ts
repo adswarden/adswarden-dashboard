@@ -5,7 +5,22 @@ const REALTIME_CHANNEL = 'realtime:notifications';
 const REALTIME_COUNT_KEY = 'realtime:connections';
 const REALTIME_COUNT_CHANNEL = 'realtime:connection_count';
 
+/** JSON list of `{ id, domain }` for platforms; used by extension ad-block hot path */
+const EXTENSION_PLATFORMS_KEY = 'extension:platforms:list';
+const EXTENSION_PLATFORMS_TTL_SEC = 60;
+
+/** Atomically DECR connection count and floor stored value at 0 (avoids negative keys in Redis). */
+const DECR_CONNECTION_COUNT_LUA = `
+local v = redis.call('DECR', KEYS[1])
+if v < 0 then
+  redis.call('SET', KEYS[1], '0')
+  return 0
+end
+return v
+`;
+
 export { REALTIME_CHANNEL, REALTIME_COUNT_KEY, REALTIME_COUNT_CHANNEL };
+export type CachedPlatformRow = { id: string; domain: string };
 
 function getRedisUrl(): string | undefined {
   return REDIS_URL && REDIS_URL.trim() !== '' ? REDIS_URL : undefined;
@@ -72,11 +87,103 @@ export async function publishRealtimeNotification(payload: string): Promise<void
 }
 
 /**
- * Publish a platforms_updated event so extension SSE subscribers can refresh their domains.
+ * Invalidate cached active platform list (call when platforms change).
  * No-op if Redis is not configured.
  */
+export async function invalidatePlatformListCache(): Promise<void> {
+  const client = await getRedisClient();
+  if (!client) return;
+  try {
+    await client.del(EXTENSION_PLATFORMS_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Read active platforms from short-lived cache (extension ad-block).
+ * Returns null on miss or if Redis unavailable.
+ */
+export async function getCachedPlatformList(): Promise<CachedPlatformRow[] | null> {
+  const client = await getRedisClient();
+  if (!client) return null;
+  try {
+    const raw = await client.get(EXTENSION_PLATFORMS_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed as CachedPlatformRow[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Store active platforms in Redis with TTL.
+ */
+export async function setCachedPlatformList(rows: CachedPlatformRow[]): Promise<void> {
+  const client = await getRedisClient();
+  if (!client) return;
+  try {
+    await client.set(EXTENSION_PLATFORMS_KEY, JSON.stringify(rows), {
+      EX: EXTENSION_PLATFORMS_TTL_SEC,
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Publish a platforms_updated event so extension SSE subscribers can refresh their domains.
+ * Clears the platform-list cache so the next ad-block request reloads from DB.
+ * No-op if Redis is not configured (cache helpers no-op too).
+ */
 export async function publishPlatformsUpdated(): Promise<void> {
+  await invalidatePlatformListCache();
   await publishRealtimeNotification(JSON.stringify({ type: 'platforms_updated' }));
+}
+
+/**
+ * Notify extension SSE listeners that campaign targeting may have changed.
+ */
+export async function publishCampaignUpdated(campaignId: string): Promise<void> {
+  await publishRealtimeNotification(
+    JSON.stringify({ type: 'campaign_updated', campaignId })
+  );
+}
+
+/** Admin changed redirect rows — extension SSE should refresh cached redirect rules. */
+export async function publishRedirectsUpdated(): Promise<void> {
+  await publishRealtimeNotification(JSON.stringify({ type: 'redirects_updated' }));
+}
+
+/** Admin changed ad creative rows — informational for extension cache. */
+export async function publishAdsUpdated(): Promise<void> {
+  await publishRealtimeNotification(JSON.stringify({ type: 'ads_updated' }));
+}
+
+/** Admin changed notification creative rows — informational for extension cache. */
+export async function publishNotificationsUpdated(): Promise<void> {
+  await publishRealtimeNotification(JSON.stringify({ type: 'notifications_updated' }));
+}
+
+/**
+ * After client-reported events, notify this user's SSE connections of new frequency count.
+ * Handlers must filter by `endUserId` so other users do not receive foreign updates.
+ */
+export async function publishFrequencyUpdated(params: {
+  endUserId: string;
+  campaignId: string;
+  count: number;
+}): Promise<void> {
+  await publishRealtimeNotification(
+    JSON.stringify({
+      type: 'frequency_updated',
+      endUserId: params.endUserId,
+      campaignId: params.campaignId,
+      count: params.count,
+    })
+  );
 }
 
 /**
@@ -91,12 +198,15 @@ export async function publishConnectionCount(count: number): Promise<void> {
 
 /**
  * Increment the live connection count. Returns the new count, or 0 if Redis unavailable.
+ * Publishes the new count for dashboard SSE subscribers.
  */
 export async function incrConnectionCount(): Promise<number> {
   const client = await getRedisClient();
   if (!client) return 0;
   try {
-    return await client.incr(REALTIME_COUNT_KEY);
+    const count = await client.incr(REALTIME_COUNT_KEY);
+    await publishConnectionCount(count);
+    return count;
   } catch {
     return 0;
   }
@@ -104,13 +214,19 @@ export async function incrConnectionCount(): Promise<number> {
 
 /**
  * Decrement the live connection count. Returns the new count, or 0 if Redis unavailable.
+ * Stored Redis value never goes below 0 (Lua script). Publishes the new count for dashboard SSE.
  */
 export async function decrConnectionCount(): Promise<number> {
   const client = await getRedisClient();
   if (!client) return 0;
   try {
-    const count = await client.decr(REALTIME_COUNT_KEY);
-    return Math.max(0, count);
+    const raw = await client.eval(DECR_CONNECTION_COUNT_LUA, {
+      keys: [REALTIME_COUNT_KEY],
+    });
+    const n = typeof raw === 'number' ? raw : Number(raw);
+    const count = Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0;
+    await publishConnectionCount(count);
+    return count;
   } catch {
     return 0;
   }
@@ -124,7 +240,9 @@ export async function getConnectionCount(): Promise<number> {
   if (!client) return 0;
   try {
     const value = await client.get(REALTIME_COUNT_KEY);
-    return value ? parseInt(value, 10) : 0;
+    if (!value) return 0;
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
   } catch {
     return 0;
   }

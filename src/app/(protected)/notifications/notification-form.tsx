@@ -13,8 +13,8 @@ import type { Notification } from '@/db/schema';
 interface NotificationFormProps {
   notification?: Notification;
   mode: 'create' | 'edit';
-  /** When provided, called on success instead of navigating. Create passes notificationId, edit passes nothing. */
-  onSuccess?: (notificationId?: string) => void | Promise<void>;
+  /** When provided, called on success instead of navigating. Receives the saved row from the API. */
+  onSuccess?: (saved?: Notification) => void | Promise<void>;
   /** When provided, called on Cancel instead of navigating (e.g. to close drawer) */
   onCancel?: () => void;
 }
@@ -52,7 +52,7 @@ export function NotificationForm({ notification, mode, onSuccess, onCancel }: No
 
       toast.success(mode === 'create' ? 'Notification created successfully' : 'Notification updated successfully');
       if (onSuccess) {
-        await onSuccess(mode === 'create' ? data?.id : undefined);
+        await onSuccess(data as Notification);
       } else {
         router.push('/notifications');
         router.refresh();

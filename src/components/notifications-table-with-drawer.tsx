@@ -11,22 +11,30 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IconPlus, IconPencil } from '@tabler/icons-react';
 import { DeleteButton } from '@/components/delete-button';
 import { NotificationEditDrawer } from '@/components/notification-edit-drawer';
+import { formatDateTimeUtcEnGb } from '@/lib/utils';
 import type { Notification } from '@/db/schema';
 
+export type NotificationListRow = Notification & { linkedCampaignCount: number };
+
 interface NotificationsTableWithDrawerProps {
-  notifications: Notification[];
+  notifications: NotificationListRow[];
   initialEditId?: string | null;
+  isAdmin: boolean;
 }
 
 export function NotificationsTableWithDrawer({
   notifications,
   initialEditId,
+  isAdmin,
 }: NotificationsTableWithDrawerProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null);
+  const [drawerMode, setDrawerMode] = useState<'view' | 'edit'>('view');
+  const [selectedNotification, setSelectedNotification] = useState<NotificationListRow | null>(null);
   const [selectedNotificationId, setSelectedNotificationId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,98 +48,172 @@ export function NotificationsTableWithDrawer({
           setSelectedNotification(null);
           setSelectedNotificationId(initialEditId);
         }
+        setDrawerMode(isAdmin ? 'edit' : 'view');
         setDrawerOpen(true);
       });
     }
-  }, [initialEditId, notifications]);
+  }, [initialEditId, notifications, isAdmin]);
 
-  const openDrawer = (notification: Notification) => {
+  const openDrawer = (notification: NotificationListRow, mode: 'view' | 'edit') => {
     setSelectedNotification(notification);
     setSelectedNotificationId(null);
+    setDrawerMode(mode);
     setDrawerOpen(true);
   };
 
+  const openRow = (notification: NotificationListRow) => openDrawer(notification, 'view');
+  const colCount = isAdmin ? 6 : 5;
+
   return (
     <>
-      <div className="flex flex-col gap-4 p-4 md:p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Notifications</h1>
-            <p className="text-muted-foreground">Manage global system notifications</p>
+      <div className="flex flex-col gap-6 p-4 md:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight">Notifications</h1>
+            <p className="text-sm text-muted-foreground">Manage global system notifications</p>
           </div>
-          <Button asChild>
-            <Link href="/notifications/new">
-              <IconPlus className="mr-2 h-4 w-4" />
-              Add Notification
-            </Link>
-          </Button>
+          {isAdmin ? (
+            <Button asChild className="shrink-0 self-start sm:self-auto">
+              <Link href="/notifications/new">
+                <IconPlus className="mr-2 h-4 w-4" />
+                Add Notification
+              </Link>
+            </Button>
+          ) : null}
         </div>
 
-        <div className="rounded-md border">
-          <Table>
+        <div className="overflow-hidden rounded-lg border border-border/80 bg-card/30 shadow-sm">
+          <Table className="table-fixed">
             <TableHeader>
-              <TableRow>
-                <TableHead>Title</TableHead>
-                <TableHead>Message</TableHead>
-                <TableHead>CTA Link</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="h-12 min-w-0 px-4 py-3 font-medium">Title</TableHead>
+                <TableHead className="h-12 min-w-0 px-4 py-3 font-medium">Message</TableHead>
+                <TableHead className="h-12 min-w-0 px-4 py-3 font-medium">CTA Link</TableHead>
+                <TableHead className="h-12 min-w-0 px-4 py-3 text-center font-medium tabular-nums">
+                  Campaigns
+                </TableHead>
+                <TableHead className="h-12 min-w-0 px-4 py-3 font-medium">Created</TableHead>
+                {isAdmin ? (
+                  <TableHead className="h-12 min-w-0 px-4 py-3 text-right font-medium">Actions</TableHead>
+                ) : null}
               </TableRow>
             </TableHeader>
             <TableBody>
               {notifications.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                    No notifications found. Create your first notification.
+                  <TableCell
+                    colSpan={colCount}
+                    className="px-4 py-12 text-center text-sm text-muted-foreground"
+                  >
+                    {isAdmin
+                      ? 'No notifications found. Create your first notification.'
+                      : 'No notifications found.'}
                   </TableCell>
                 </TableRow>
               ) : (
                 notifications.map((notification) => (
                   <TableRow
                     key={notification.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => openDrawer(notification)}
+                    className="min-h-[52px] cursor-pointer transition-colors hover:bg-muted/40"
+                    tabIndex={0}
+                    onClick={() => openRow(notification)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openRow(notification);
+                      }
+                    }}
                   >
-                    <TableCell className="font-medium">{notification.title}</TableCell>
-                    <TableCell className="max-w-xs truncate">{notification.message}</TableCell>
-                    <TableCell className="max-w-[200px] truncate">
+                    <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {notification.title}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {notification.title}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="max-w-xs min-w-0 overflow-hidden px-4 py-3 align-middle">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {notification.message}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {notification.message}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="max-w-[200px] min-w-0 overflow-hidden px-4 py-3 align-middle">
                       {notification.ctaLink ? (
-                        <a
-                          href={notification.ctaLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary hover:underline truncate block"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {notification.ctaLink}
-                        </a>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <a
+                              href={notification.ctaLink}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block max-w-full cursor-pointer truncate text-primary underline-offset-4 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {notification.ctaLink}
+                            </a>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-sm break-all">
+                            {notification.ctaLink}
+                          </TooltipContent>
+                        </Tooltip>
                       ) : (
-                        <span className="text-muted-foreground">—</span>
+                        <span className="text-sm text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(notification.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openDrawer(notification);
-                          }}
-                        >
-                          <IconPencil className="h-4 w-4" />
-                        </Button>
-                        <DeleteButton
-                          id={notification.id}
-                          name={notification.title}
-                          entityType="notification"
-                          apiPath={`/api/notifications/${notification.id}`}
-                        />
+                    <TableCell className="min-w-0 px-4 py-3 align-middle tabular-nums">
+                      <div className="flex justify-center">
+                        {notification.linkedCampaignCount > 0 ? (
+                          <Badge
+                            variant="secondary"
+                            className="min-w-7 justify-center px-2.5 py-0.5 tabular-nums font-medium"
+                          >
+                            {notification.linkedCampaignCount}
+                          </Badge>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
                       </div>
                     </TableCell>
+                    <TableCell
+                      className="min-w-0 px-4 py-3 align-middle text-sm tabular-nums text-muted-foreground"
+                      title="UTC"
+                    >
+                      {formatDateTimeUtcEnGb(notification.createdAt)}
+                    </TableCell>
+                    {isAdmin ? (
+                      <TableCell
+                        className="min-w-0 px-4 py-3 text-right align-middle"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9"
+                            aria-label={`Edit ${notification.title}`}
+                            onClick={() => openDrawer(notification, 'edit')}
+                          >
+                            <IconPencil className="h-4 w-4" />
+                          </Button>
+                          <DeleteButton
+                            name={notification.title}
+                            entityType="notification"
+                            apiPath={`/api/notifications/${notification.id}`}
+                          />
+                        </div>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))
               )}
@@ -145,6 +227,8 @@ export function NotificationsTableWithDrawer({
         onOpenChange={setDrawerOpen}
         notification={selectedNotification}
         notificationId={selectedNotificationId ?? undefined}
+        initialMode={drawerMode}
+        showEditAction={isAdmin}
       />
     </>
   );

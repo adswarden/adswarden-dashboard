@@ -1,21 +1,21 @@
-import { IconChartBar, IconTrendingUp, IconUsers } from "@tabler/icons-react"
+import { IconEye, IconTrendingUp, IconUsers } from "@tabler/icons-react"
 
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
-  CardAction,
-  CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
+  CardContent,
 } from "@/components/ui/card"
 
 interface SectionCardsProps {
   activeCampaigns: number;
   totalCampaigns: number;
-  campaignLogs: number;
+  campaignImpressions: number;
   activeUsers: number;
   liveUsers?: number;
+  /** Footer under extension user count when `liveUsers` is not set (e.g. scoped metric for non-admins). */
+  extensionUsersCaption?: string;
   /** Optional card to prepend to the grid (e.g. live connections) */
   extraCard?: React.ReactNode;
 }
@@ -23,82 +23,64 @@ interface SectionCardsProps {
 export function SectionCards({
   activeCampaigns,
   totalCampaigns,
-  campaignLogs,
+  campaignImpressions,
   activeUsers,
   liveUsers,
+  extensionUsersCaption,
   extraCard,
 }: SectionCardsProps) {
   const activePercentage = totalCampaigns > 0 ? Math.round((activeCampaigns / totalCampaigns) * 100) : 0;
 
   return (
-    <div className="*:data-[slot=card]:from-primary/5 *:data-[slot=card]:to-card dark:*:data-[slot=card]:bg-card grid grid-cols-1 gap-4 px-4 *:data-[slot=card]:bg-gradient-to-t *:data-[slot=card]:shadow-xs lg:px-6 @xl/main:grid-cols-2 @5xl/main:grid-cols-4">
+    <section
+      aria-label="Key metrics"
+      className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4"
+    >
       {extraCard}
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Active Campaigns</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {activeCampaigns}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="bg-green-500/10 text-green-600 dark:text-green-400">
-              <IconTrendingUp className="size-3" />
-              {activePercentage}%
-            </Badge>
-          </CardAction>
+      <Card className="border-border bg-card/40 py-4 shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Active campaigns</CardTitle>
+          <Badge
+            variant="outline"
+            className="bg-green-500/10 text-green-600 dark:text-green-400"
+          >
+            <IconTrendingUp className="size-3" />
+            {activePercentage}%
+          </Badge>
         </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Currently running campaigns
-          </div>
-          <div className="text-muted-foreground">
+        <CardContent>
+          <div className="text-2xl font-bold tabular-nums">{activeCampaigns}</div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
             {totalCampaigns} total campaigns
-          </div>
-        </CardFooter>
+          </p>
+        </CardContent>
       </Card>
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Campaign Logs</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {campaignLogs}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline">
-              <IconChartBar className="size-3" />
-              Extension requests
-            </Badge>
-          </CardAction>
+      <Card className="border-border bg-card/40 py-4 shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Impressions</CardTitle>
+          <IconEye className="h-4 w-4 text-muted-foreground" aria-hidden />
         </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Ad/notification/popup requests
-          </div>
-          <div className="text-muted-foreground">
-            From extension users
-          </div>
-        </CardFooter>
+        <CardContent>
+          <div className="text-2xl font-bold tabular-nums">{campaignImpressions}</div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Ad, popup, and notification events on campaigns (all time)
+          </p>
+        </CardContent>
       </Card>
-      <Card className="@container/card">
-        <CardHeader>
-          <CardDescription>Extension users</CardDescription>
-          <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
-            {activeUsers}
-          </CardTitle>
-          <CardAction>
-            <Badge variant="outline" className="bg-blue-500/10 text-blue-600 dark:text-blue-400">
-              <IconUsers className="size-3" />
-              {liveUsers !== undefined ? `${liveUsers} live` : 'Total'}
-            </Badge>
-          </CardAction>
+      <Card className="border-border bg-card/40 py-4 shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Extension users</CardTitle>
+          <IconUsers className="h-4 w-4 text-muted-foreground" aria-hidden />
         </CardHeader>
-        <CardFooter className="flex-col items-start gap-1.5 text-sm">
-          <div className="line-clamp-1 flex gap-2 font-medium">
-            Unique extension visitors
-          </div>
-          <div className="text-muted-foreground">
-            {liveUsers !== undefined ? `${liveUsers} currently connected` : 'Tracked in visitors table'}
-          </div>
-        </CardFooter>
+        <CardContent>
+          <div className="text-2xl font-bold tabular-nums">{activeUsers}</div>
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {liveUsers !== undefined
+              ? `${liveUsers} live right now`
+              : extensionUsersCaption ?? 'All accounts registered with the extension'}
+          </p>
+        </CardContent>
       </Card>
-    </div>
+    </section>
   )
 }

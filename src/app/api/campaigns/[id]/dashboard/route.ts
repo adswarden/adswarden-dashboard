@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
 import {
-  visitors,
-  campaignPlatforms,
-  campaignCountries,
-  campaignAd,
-  campaignNotification,
+  enduserEvents,
+  campaigns,
   platforms,
   ads,
   notifications,
+  redirects,
 } from '@/db/schema';
 import { and, eq, gte, lte, desc, sql, inArray } from 'drizzle-orm';
+import { getAccessibleCampaignById } from '@/lib/campaign-access';
 import { getSessionWithRole } from '@/lib/dal';
 import { getDateRange, fillMissingDays } from '@/lib/date-range';
 import { extractRootDomain, getCanonicalDisplayDomain } from '@/lib/domain-utils';
@@ -36,97 +35,111 @@ export async function GET(
     }
 
     const { id } = await params;
+    const accessible = await getAccessibleCampaignById(sessionWithRole, id);
+    if (!accessible) {
+      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+    }
+
     const { searchParams } = new URL(request.url);
-    const range = (searchParams.get('range') ?? '14d') as RangeKey;
+    const range = (searchParams.get('range') ?? '7d') as RangeKey;
     const validRange: RangeKey[] = ['7d', '14d', '30d'];
-    const rangeParam = validRange.includes(range) ? range : '14d';
+    const rangeParam = validRange.includes(range) ? range : '7d';
 
-    const { start, end, prevStart, prevEnd } = getDateRange(rangeParam, RANGE_DAYS, 14);
+    const { start, end, prevStart, prevEnd } = getDateRange(rangeParam, RANGE_DAYS, 7);
 
-    // Current period logs
-    const [currentLogs, prevLogs, platformRows, countryRows, adRow, notifRow] = await Promise.all([
+    const utcDay = sql`( ${enduserEvents.createdAt} AT TIME ZONE 'UTC' )::date`;
+
+    const periodCurrent = and(
+      eq(enduserEvents.campaignId, id),
+      gte(enduserEvents.createdAt, start),
+      lte(enduserEvents.createdAt, end)
+    );
+    const periodPrev = and(
+      eq(enduserEvents.campaignId, id),
+      gte(enduserEvents.createdAt, prevStart),
+      lte(enduserEvents.createdAt, prevEnd)
+    );
+
+    const [
+      kpiCurRow,
+      kpiPrevRow,
+      chartAggRows,
+      campaignLinkRow,
+      topDomainsRaw,
+      countryDistribution,
+    ] = await Promise.all([
       db
-        .select({ createdAt: visitors.createdAt, visitorId: visitors.visitorId })
-        .from(visitors)
-        .where(
-          and(
-            eq(visitors.campaignId, id),
-            gte(visitors.createdAt, start),
-            lte(visitors.createdAt, end)
-          )
-        ),
+        .select({
+          impressions: sql<number>`count(*)::int`,
+          uniqueUsers: sql<number>`count(distinct ${enduserEvents.endUserId})::int`,
+        })
+        .from(enduserEvents)
+        .where(periodCurrent),
       db
-        .select({ createdAt: visitors.createdAt, visitorId: visitors.visitorId })
-        .from(visitors)
-        .where(
-          and(
-            eq(visitors.campaignId, id),
-            gte(visitors.createdAt, prevStart),
-            lte(visitors.createdAt, prevEnd)
-          )
-        ),
+        .select({
+          impressions: sql<number>`count(*)::int`,
+          uniqueUsers: sql<number>`count(distinct ${enduserEvents.endUserId})::int`,
+        })
+        .from(enduserEvents)
+        .where(periodPrev),
       db
-        .select({ platformId: campaignPlatforms.platformId })
-        .from(campaignPlatforms)
-        .where(eq(campaignPlatforms.campaignId, id)),
+        .select({
+          dateStr: sql<string>`${utcDay}::text`,
+          impressions: sql<number>`count(*)::int`,
+          users: sql<number>`count(distinct ${enduserEvents.endUserId})::int`,
+        })
+        .from(enduserEvents)
+        .where(periodCurrent)
+        .groupBy(utcDay),
       db
-        .select({ countryCode: campaignCountries.countryCode })
-        .from(campaignCountries)
-        .where(eq(campaignCountries.campaignId, id)),
-      db
-        .select({ adId: campaignAd.adId })
-        .from(campaignAd)
-        .where(eq(campaignAd.campaignId, id))
+        .select({
+          adId: campaigns.adId,
+          notificationId: campaigns.notificationId,
+          redirectId: campaigns.redirectId,
+          platformIds: campaigns.platformIds,
+          countryCodes: campaigns.countryCodes,
+        })
+        .from(campaigns)
+        .where(eq(campaigns.id, id))
         .limit(1),
       db
-        .select({ notificationId: campaignNotification.notificationId })
-        .from(campaignNotification)
-        .where(eq(campaignNotification.campaignId, id))
-        .limit(1),
+        .select({ domain: enduserEvents.domain, count: sql<number>`count(*)` })
+        .from(enduserEvents)
+        .where(periodCurrent)
+        .groupBy(enduserEvents.domain)
+        .orderBy(desc(sql`count(*)`))
+        .limit(30),
+      db
+        .select({ country: enduserEvents.country, count: sql<number>`count(*)` })
+        .from(enduserEvents)
+        .where(periodCurrent)
+        .groupBy(enduserEvents.country)
+        .orderBy(desc(sql`count(*)`))
+        .limit(15),
     ]);
 
-    // KPIs current period
-    const impressions = currentLogs.length;
-    const uniqueVisitors = new Set(currentLogs.map((l) => l.visitorId)).size;
-
-    // Previous period for comparison
-    const prevImpressions = prevLogs.length;
-    const prevUniqueVisitors = new Set(prevLogs.map((l) => l.visitorId)).size;
+    const impressions = Number(kpiCurRow[0]?.impressions ?? 0);
+    const uniqueEndUsers = Number(kpiCurRow[0]?.uniqueUsers ?? 0);
+    const prevImpressions = Number(kpiPrevRow[0]?.impressions ?? 0);
+    const prevUniqueEndUsers = Number(kpiPrevRow[0]?.uniqueUsers ?? 0);
 
     const impressionsChange =
       prevImpressions > 0 ? ((impressions - prevImpressions) / prevImpressions) * 100 : null;
     const usersChange =
-      prevUniqueVisitors > 0
-        ? ((uniqueVisitors - prevUniqueVisitors) / prevUniqueVisitors) * 100
+      prevUniqueEndUsers > 0
+        ? ((uniqueEndUsers - prevUniqueEndUsers) / prevUniqueEndUsers) * 100
         : null;
 
-    // Chart data
     const impressionsByDate = new Map<string, number>();
-    const usersByDate = new Map<string, Set<string>>();
-    for (const log of currentLogs) {
-      const dateStr = new Date(log.createdAt).toISOString().slice(0, 10);
-      impressionsByDate.set(dateStr, (impressionsByDate.get(dateStr) ?? 0) + 1);
-      if (!usersByDate.has(dateStr)) usersByDate.set(dateStr, new Set());
-      usersByDate.get(dateStr)!.add(log.visitorId);
+    const usersByDate = new Map<string, number>();
+    for (const row of chartAggRows) {
+      impressionsByDate.set(row.dateStr, Number(row.impressions));
+      usersByDate.set(row.dateStr, Number(row.users));
     }
     const chartData = fillMissingDays(start, end, (dateStr) => ({
       impressions: impressionsByDate.get(dateStr) ?? 0,
-      users: usersByDate.get(dateStr)?.size ?? 0,
+      users: usersByDate.get(dateStr) ?? 0,
     }));
-
-    const topDomainsRaw = await db
-      .select({ domain: visitors.domain, count: sql<number>`count(*)` })
-      .from(visitors)
-      .where(
-        and(
-          eq(visitors.campaignId, id),
-          gte(visitors.createdAt, start),
-          lte(visitors.createdAt, end)
-        )
-      )
-      .groupBy(visitors.domain)
-      .orderBy(desc(sql`count(*)`))
-      .limit(30);
 
     // Merge domains by root (e.g. www.instagram.com + instagram.com → instagram.com)
     const mergedByRoot = new Map<string, { displayDomain: string; count: number }>();
@@ -148,21 +161,8 @@ export async function GET(
       .slice(0, 10)
       .map(({ displayDomain, count }) => ({ domain: displayDomain, count }));
 
-    const countryDistribution = await db
-      .select({ country: visitors.country, count: sql<number>`count(*)` })
-      .from(visitors)
-      .where(
-        and(
-          eq(visitors.campaignId, id),
-          gte(visitors.createdAt, start),
-          lte(visitors.createdAt, end)
-        )
-      )
-      .groupBy(visitors.country)
-      .orderBy(desc(sql`count(*)`))
-      .limit(15);
-
-    const platformIds = platformRows.map((r) => r.platformId);
+    const linkingRow = campaignLinkRow[0];
+    const platformIds = linkingRow?.platformIds?.length ? [...linkingRow.platformIds] : [];
     const platformDomains =
       platformIds.length > 0
         ? (
@@ -176,27 +176,57 @@ export async function GET(
     let linkedContent:
       | { type: 'ad'; id: string; name: string; description: string | null; imageUrl: string | null; targetUrl: string | null }
       | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null }
+      | {
+        type: 'redirect';
+        id: string;
+        name: string;
+        sourceDomain: string;
+        includeSubdomains: boolean;
+        destinationUrl: string;
+      }
       | null = null;
-    if (adRow[0]) {
+    const linking = linkingRow;
+    if (linking?.adId) {
       const [ad] = await db
         .select({ id: ads.id, name: ads.name, description: ads.description, imageUrl: ads.imageUrl, targetUrl: ads.targetUrl })
         .from(ads)
-        .where(eq(ads.id, adRow[0].adId))
+        .where(eq(ads.id, linking.adId))
         .limit(1);
       if (ad) linkedContent = { type: 'ad', id: ad.id, name: ad.name, description: ad.description, imageUrl: ad.imageUrl, targetUrl: ad.targetUrl };
-    } else if (notifRow[0]) {
+    } else if (linking?.notificationId) {
       const [n] = await db
         .select({ id: notifications.id, title: notifications.title, message: notifications.message, ctaLink: notifications.ctaLink })
         .from(notifications)
-        .where(eq(notifications.id, notifRow[0].notificationId))
+        .where(eq(notifications.id, linking.notificationId))
         .limit(1);
       if (n) linkedContent = { type: 'notification', id: n.id, title: n.title, message: n.message, ctaLink: n.ctaLink };
+    } else if (linking?.redirectId) {
+      const [r] = await db
+        .select({
+          id: redirects.id,
+          name: redirects.name,
+          sourceDomain: redirects.sourceDomain,
+          includeSubdomains: redirects.includeSubdomains,
+          destinationUrl: redirects.destinationUrl,
+        })
+        .from(redirects)
+        .where(eq(redirects.id, linking.redirectId))
+        .limit(1);
+      if (r)
+        linkedContent = {
+          type: 'redirect',
+          id: r.id,
+          name: r.name,
+          sourceDomain: r.sourceDomain,
+          includeSubdomains: r.includeSubdomains,
+          destinationUrl: r.destinationUrl,
+        };
     }
 
     return NextResponse.json({
       kpis: {
         impressions,
-        uniqueUsers: uniqueVisitors,
+        uniqueUsers: uniqueEndUsers,
         ctr: null,
         conversions: null,
         impressionsChange,
@@ -210,7 +240,7 @@ export async function GET(
       })),
       meta: {
         platformDomains,
-        countryCodes: countryRows.map((r) => r.countryCode),
+        countryCodes: linkingRow?.countryCodes?.length ? [...linkingRow.countryCodes] : [],
         linkedContent,
       },
     });

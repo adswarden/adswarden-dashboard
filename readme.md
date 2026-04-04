@@ -8,8 +8,19 @@ This admin dashboard provides a complete solution for managing:
 - **Platforms**: Configure domains where ads and notifications will be displayed
 - **Ads**: Create, manage, and schedule advertisements with images and target URLs
 - **Notifications**: Create time-bound notifications for specific platforms
-- **Analytics**: Track extension user activity and request logs
+- **Events**: Track extension activity (`enduser_events`: one row per serve; **Events** dashboard at `/events`; legacy path `/analytics` redirects there). The **Users** page aggregates extension customers by `enduser_id`.
 - **Extension API**: RESTful API endpoints for browser extensions to fetch ads and notifications
+
+## Architecture at a glance
+
+- **Staff (admin UI)**: Routes under `src/app/(protected)/` use Better Auth session cookies. [`src/lib/dal.ts`](./src/lib/dal.ts) exposes `getSessionWithRole`; API routes use the same pattern for `/api/*` CRUD.
+- **Extension customers**: Public routes under `src/app/api/extension/` (`ad-block`, `domains`, `auth/*`). Authenticated calls use a **Bearer** token (see [`src/lib/enduser-auth.ts`](./src/lib/enduser-auth.ts)), not the staff cookie session.
+- **Realtime in the dashboard**: The home dashboard uses **staff-authenticated** [`/api/realtime/stream`](./src/app/api/realtime/stream/route.ts) (SSE). Do not point admin UI clients at extension-only endpoints for “live” counts.
+- **`end-user` libraries** (easy to mix up):
+  - [`src/lib/end-user-dashboard.ts`](./src/lib/end-user-dashboard.ts) — KPIs and snapshot for **one** extension user (detail pages).
+  - [`src/lib/end-users-dashboard.ts`](./src/lib/end-users-dashboard.ts) — list query, filters, and pagination for `/api/end-users` and the Users table.
+- **Ops / deploy**: Environment and hosting checklist: **[docs/DEPLOY.md](./docs/DEPLOY.md)**.
+- **Edge proxy (security headers)**: [`src/proxy.ts`](./src/proxy.ts) runs before routes (Next.js 16+ `proxy` convention). Do not add `middleware.ts`; Next rejects both files at once.
 
 ## Tech Stack
 
@@ -73,8 +84,9 @@ DATABASE_POOL_MAX=10
 
 **Optional variables:**
 - `DATABASE_POOL_MAX` - Database connection pool size (default: 10)
-- `REDIS_URL` - Redis URL for realtime connection count and notifications
+- `REDIS_URL` - Redis URL for realtime features (`/api/realtime/*`) and optional per-IP rate limiting on `POST /api/extension/ad-block` (requests still work without Redis; limits are skipped)
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD` - For seeding first admin user
+- `EXTENSION_INTEGRATION=1` - With `pnpm test:integration`, enables HTTP tests against a running app + DB (see [.env.example](./.env.example))
 
 ### 3. Install Dependencies
 
@@ -109,6 +121,10 @@ pnpm dev
 ```
 
 The application will be available at `http://localhost:3000`.
+
+## Production deployment (Vercel)
+
+Deploy by connecting this repo to [Vercel](https://vercel.com) and setting environment variables in the project settings. See **[docs/DEPLOY.md](./docs/DEPLOY.md)** for the full checklist (`DATABASE_URL`, `BETTER_AUTH_BASE_URL`, `BETTER_AUTH_SECRET`, optional `REDIS_URL`, etc.). Docker and manual standalone builds are documented there as alternatives.
 
 ## Authentication
 
@@ -213,10 +229,16 @@ admin_dashboard/
 - `pnpm db:migrate` - Apply database migrations
 - `pnpm db:push` - Push schema directly (dev only)
 - `pnpm db:studio` - Open Drizzle Studio
+- `pnpm test` - Vitest unit tests (extension HTTP integration tests are skipped unless `EXTENSION_INTEGRATION=1`)
+- `pnpm test:integration` - Extension register/login/domains/ad-block against a **running** app + DB (`EXTENSION_INTEGRATION=1` is set by the script)
 - `pnpm test:extension-log` - Run test script to simulate extension requests
 - `pnpm load-test:extension` - Load test extension API (10 users × 10 req/min × 10 min)
 
 ## Testing
+
+Layout (function-based / task-based / user-flow) and commands: [tests/README.md](./tests/README.md).
+
+`pnpm test` runs the full Vitest suite **without** requiring `next dev`. Extension flow integration specs are opt-in: the script `pnpm test:integration` exports `EXTENSION_INTEGRATION=1` and expects `.env.local` (or CI secrets) to point `BETTER_AUTH_BASE_URL` at the live stack.
 
 ### Extension API Testing
 
@@ -294,7 +316,7 @@ The database connection uses a singleton pattern compatible with Next.js dev mod
 ## API Endpoints
 
 ### Admin API (Protected)
-- `GET /api/campaigns` - List campaigns
+- `GET /api/campaigns` - List campaigns (`?page=&pageSize=`). Response: `{ data, page, pageSize, totalCount, totalPages }`. Non-admins only see campaigns they created.
 - `POST /api/campaigns` - Create campaign (admin only)
 - `GET /api/campaigns/[id]` - Get campaign
 - `PUT /api/campaigns/[id]` - Update campaign (admin only)
@@ -305,25 +327,37 @@ The database connection uses a singleton pattern compatible with Next.js dev mod
 - `PUT /api/platforms/[id]` - Update platform
 - `DELETE /api/platforms/[id]` - Delete platform
 
-- `GET /api/ads` - List all ads (or filter by domain)
+- `GET /api/ads` - List all ads (or filter by domain). Each row includes `linkedCampaignCount` (campaigns referencing `ad_id`).
 - `POST /api/ads` - Create ad
 - `GET /api/ads/[id]` - Get ad
 - `PUT /api/ads/[id]` - Update ad
 - `DELETE /api/ads/[id]` - Delete ad
 
-- `GET /api/notifications` - List all notifications (or filter by domain)
+- `GET /api/notifications` - List notifications (`?page=&pageSize=`). Response: `{ data, page, pageSize, totalCount, totalPages }`. Each item in `data` includes `linkedCampaignCount`.
 - `POST /api/notifications` - Create notification
 - `GET /api/notifications/[id]` - Get notification
 - `PUT /api/notifications/[id]` - Update notification
 - `DELETE /api/notifications/[id]` - Delete notification
 
+- `GET /api/redirects` - List redirects. Each row includes `linkedCampaignCount`.
+- `POST /api/redirects` - Create redirect
+- `GET /api/redirects/[id]` - Get redirect
+- `PUT /api/redirects/[id]` - Update redirect
+- `DELETE /api/redirects/[id]` - Delete redirect
+
 ### Extension API (Public)
-- `POST /api/extension/ad-block` - Get ads and/or notifications for domain and automatically log visit(s). Body: `{visitorId, domain, requestType?}`. Returns `{ads: [...], notifications: [...]}`.
+- `POST /api/extension/ad-block` - Get ads and/or notifications for domain and automatically log visit(s). Body: `{endUserId, domain, requestType?}`. Returns `{ads: [...], notifications: [...]}`.
 
 ### Authentication API (Better Auth)
 - `GET/POST /api/auth/*` - Better Auth catch-all (sign-in, sign-up, sign-out, session, etc.)
 
 See [docs/EXTENSION_AD_BLOCK_API.md](./docs/EXTENSION_AD_BLOCK_API.md) and [docs/EXTENSION_API_DOCS.md](./docs/EXTENSION_API_DOCS.md) for detailed extension API documentation.
+
+## Continuous integration
+
+GitHub Actions ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)) runs `pnpm lint`, `pnpm build`, and `pnpm test` on pushes and PRs to `main` and `dev`. Build and test jobs set minimal `DATABASE_URL` and `BETTER_AUTH_*` values so CI does not rely on committed secrets.
+
+Optional dead-code pass: `pnpm dlx knip` (no Knip config in-repo; add ignores if you adopt it).
 
 ## Documentation
 
@@ -341,7 +375,7 @@ Key documents:
 - Ensure all environment variables are set in production (`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_BASE_URL`)
 - Use strong `BETTER_AUTH_SECRET` (minimum 32 characters)
 - **Migrations run automatically** on app startup (via `instrumentation.ts`) — no manual `pnpm db:migrate` needed
-- The single migration `0000_final_schema` is idempotent and safe to run on fresh or existing databases
+- The single migration `0000_initial.sql` is idempotent and safe to run on fresh or existing databases
 - Database connection handles graceful shutdown
 - Use production-ready connection pooling settings
 - Enable HTTPS for secure cookie transmission

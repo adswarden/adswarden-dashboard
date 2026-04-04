@@ -5,22 +5,15 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { IconLoader2 } from '@tabler/icons-react';
 import { toast } from 'sonner';
 import type { Platform } from '@/db/schema';
-
-export interface NewPlatformResult {
-  id: string;
-  name: string;
-  domain: string;
-}
 
 interface PlatformFormProps {
   platform?: Platform;
   mode: 'create' | 'edit';
   /** When provided, called on success instead of navigating (e.g. drawer mode). In create mode, receives the new platform. */
-  onSuccess?: (newPlatform?: NewPlatformResult) => void | Promise<void>;
+  onSuccess?: (saved?: Platform) => void | Promise<void>;
   /** When provided, called on Cancel instead of navigating (e.g. drawer mode) */
   onCancel?: () => void;
 }
@@ -30,7 +23,6 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
   const [isLoading, setIsLoading] = useState(false);
   const [name, setName] = useState(platform?.name || '');
   const [domain, setDomain] = useState(platform?.domain || '');
-  const [isActive, setIsActive] = useState(platform?.isActive ?? true);
 
   const extractDomainFromInput = (input: string): string => {
     const trimmed = input.trim();
@@ -64,7 +56,7 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, domain, isActive }),
+        body: JSON.stringify({ name, domain }),
       });
 
       const data = await response.json();
@@ -75,7 +67,7 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
 
       toast.success(mode === 'create' ? 'Platform created successfully' : 'Platform updated successfully');
       if (onSuccess) {
-        await onSuccess(mode === 'create' ? data : undefined);
+        await onSuccess(data as Platform);
       } else {
         router.push('/platforms');
         router.refresh();
@@ -115,16 +107,6 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
         <p className="text-sm text-muted-foreground">
           Enter domain or subdomain (e.g., instagram.com, www.instagram.com). Full URLs will be automatically extracted.
         </p>
-      </div>
-
-      <div className="flex items-center space-x-2">
-        <Switch
-          id="isActive"
-          checked={isActive}
-          onCheckedChange={setIsActive}
-          disabled={isLoading}
-        />
-        <Label htmlFor="isActive">Active</Label>
       </div>
 
       <div className="flex gap-2 pt-4">

@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import {
-  campaigns,
-  campaignPlatforms,
-  campaignCountries,
-  campaignAd,
-  campaignNotification,
-  notifications,
-} from '@/db/schema';
+import { campaigns, enduserEvents, notifications } from '@/db/schema';
 import { eq } from 'drizzle-orm';
+import { formatCampaignResponse, getAccessibleCampaignById } from '@/lib/campaign-access';
 import { getSessionWithRole } from '@/lib/dal';
-import { publishRealtimeNotification } from '@/lib/redis';
+import { publishCampaignUpdated, publishRealtimeNotification } from '@/lib/redis';
+import { ensureCampaignStatusDeletedEnumReady } from '@/lib/db/run-migrate';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,19 +13,13 @@ async function getCampaignWithRelations(id: string) {
   const [c] = await db.select().from(campaigns).where(eq(campaigns.id, id)).limit(1);
   if (!c) return null;
 
-  const [platformRows, countryRows, adRow, notifRow] = await Promise.all([
-    db.select({ platformId: campaignPlatforms.platformId }).from(campaignPlatforms).where(eq(campaignPlatforms.campaignId, id)),
-    db.select({ countryCode: campaignCountries.countryCode }).from(campaignCountries).where(eq(campaignCountries.campaignId, id)),
-    db.select({ adId: campaignAd.adId }).from(campaignAd).where(eq(campaignAd.campaignId, id)).limit(1),
-    db.select({ notificationId: campaignNotification.notificationId }).from(campaignNotification).where(eq(campaignNotification.campaignId, id)).limit(1),
-  ]);
-
   return {
     ...c,
-    platformIds: platformRows.map((r) => r.platformId),
-    countryCodes: countryRows.map((r) => r.countryCode),
-    adId: adRow[0]?.adId ?? null,
-    notificationId: notifRow[0]?.notificationId ?? null,
+    platformIds: [...(c.platformIds ?? [])],
+    countryCodes: [...(c.countryCodes ?? [])],
+    adId: c.adId ?? null,
+    notificationId: c.notificationId ?? null,
+    redirectId: c.redirectId ?? null,
   };
 }
 
@@ -46,11 +35,11 @@ export async function GET(
     }
 
     const { id } = await params;
-    const campaign = await getCampaignWithRelations(id);
-    if (!campaign) {
+    const row = await getAccessibleCampaignById(sessionWithRole, id);
+    if (!row) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
-    return NextResponse.json(campaign);
+    return NextResponse.json(formatCampaignResponse(row));
   } catch (error) {
     console.error('Error fetching campaign:', error);
     return NextResponse.json({ error: 'Failed to fetch campaign' }, { status: 500 });
@@ -76,7 +65,6 @@ export async function PUT(
     if (!existing) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
-
     const body = await request.json();
     const {
       name,
@@ -93,19 +81,44 @@ export async function PUT(
       countryCodes,
       adId,
       notificationId,
+      redirectId,
     } = body;
 
+    if (status === 'deleted') {
+      return NextResponse.json(
+        { error: 'Use DELETE to remove a campaign; status cannot be set to deleted via update' },
+        { status: 400 }
+      );
+    }
+
+    if (existing.status === 'deleted') {
+      const nextStatus = status ?? existing.status;
+      if (nextStatus !== 'active' && nextStatus !== 'inactive') {
+        return NextResponse.json(
+          {
+            error:
+              'This campaign was deleted. Set status to active or inactive to restore it (and send the rest of the campaign fields as needed).',
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const effectiveCampaignType = campaignType ?? existing.campaignType;
-    const effectivePlatformIds = platformIds ?? (await db.select({ platformId: campaignPlatforms.platformId }).from(campaignPlatforms).where(eq(campaignPlatforms.campaignId, id))).map((r) => r.platformId);
-    if (effectiveCampaignType !== 'notification' && (!Array.isArray(effectivePlatformIds) || effectivePlatformIds.length === 0)) {
+    const effectivePlatformIds =
+      platformIds ?? (existing.platformIds?.length ? [...existing.platformIds] : []);
+    if (
+      effectiveCampaignType !== 'notification' &&
+      effectiveCampaignType !== 'redirect' &&
+      (!Array.isArray(effectivePlatformIds) || effectivePlatformIds.length === 0)
+    ) {
       return NextResponse.json(
         { error: 'Select at least one domain (platform)' },
         { status: 400 }
       );
     }
     if (effectiveCampaignType === 'ads' || effectiveCampaignType === 'popup') {
-      const [adRow] = await db.select({ adId: campaignAd.adId }).from(campaignAd).where(eq(campaignAd.campaignId, id)).limit(1);
-      const effectiveAdId = adId !== undefined ? adId : adRow?.adId;
+      const effectiveAdId = adId !== undefined ? adId : existing.adId;
       if (!effectiveAdId) {
         return NextResponse.json(
           { error: `Select an ${effectiveCampaignType === 'popup' ? 'pop up' : 'ad'}` },
@@ -113,11 +126,18 @@ export async function PUT(
         );
       }
     } else if (effectiveCampaignType === 'notification') {
-      const [notifRow] = await db.select({ notificationId: campaignNotification.notificationId }).from(campaignNotification).where(eq(campaignNotification.campaignId, id)).limit(1);
-      const effectiveNotifId = notificationId !== undefined ? notificationId : notifRow?.notificationId;
+      const effectiveNotifId = notificationId !== undefined ? notificationId : existing.notificationId;
       if (!effectiveNotifId) {
         return NextResponse.json(
           { error: 'Select a notification' },
+          { status: 400 }
+        );
+      }
+    } else if (effectiveCampaignType === 'redirect') {
+      const effectiveRedirectId = redirectId !== undefined ? redirectId : existing.redirectId;
+      if (!effectiveRedirectId) {
+        return NextResponse.json(
+          { error: 'Select a redirect' },
           { status: 400 }
         );
       }
@@ -137,49 +157,35 @@ export async function PUT(
         ...(status !== undefined && { status }),
         ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
         ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
+        ...(adId !== undefined && { adId: adId ?? null }),
+        ...(notificationId !== undefined && { notificationId: notificationId ?? null }),
+        ...(redirectId !== undefined && { redirectId: redirectId ?? null }),
+        ...(platformIds !== undefined && {
+          platformIds: Array.isArray(platformIds) ? platformIds : [],
+        }),
+        ...(countryCodes !== undefined && {
+          countryCodes: Array.isArray(countryCodes)
+            ? countryCodes.map((code: string) => code.toUpperCase().slice(0, 2))
+            : [],
+        }),
         updatedAt: now,
       })
       .where(eq(campaigns.id, id));
+    if (notificationId !== undefined && notificationId) {
+      const [notif] = await db.select().from(notifications).where(eq(notifications.id, notificationId)).limit(1);
+      if (notif) {
+        await publishRealtimeNotification(
+          JSON.stringify({
+            type: 'updated',
+            id: notif.id,
+            title: notif.title,
+            message: notif.message,
+          })
+        );
+      }
+    }
 
-    if (platformIds !== undefined) {
-      await db.delete(campaignPlatforms).where(eq(campaignPlatforms.campaignId, id));
-      if (Array.isArray(platformIds) && platformIds.length > 0) {
-        await db.insert(campaignPlatforms).values(
-          platformIds.map((platformId: string) => ({ campaignId: id, platformId }))
-        );
-      }
-    }
-    if (countryCodes !== undefined) {
-      await db.delete(campaignCountries).where(eq(campaignCountries.campaignId, id));
-      if (Array.isArray(countryCodes) && countryCodes.length > 0) {
-        await db.insert(campaignCountries).values(
-          countryCodes.map((code: string) => ({ campaignId: id, countryCode: code.toUpperCase().slice(0, 2) }))
-        );
-      }
-    }
-    if (adId !== undefined) {
-      await db.delete(campaignAd).where(eq(campaignAd.campaignId, id));
-      if (adId) {
-        await db.insert(campaignAd).values({ campaignId: id, adId });
-      }
-    }
-    if (notificationId !== undefined) {
-      await db.delete(campaignNotification).where(eq(campaignNotification.campaignId, id));
-      if (notificationId) {
-        await db.insert(campaignNotification).values({ campaignId: id, notificationId });
-        const [notif] = await db.select().from(notifications).where(eq(notifications.id, notificationId)).limit(1);
-        if (notif) {
-          await publishRealtimeNotification(
-            JSON.stringify({
-              type: 'updated',
-              id: notif.id,
-              title: notif.title,
-              message: notif.message,
-            })
-          );
-        }
-      }
-    }
+    await publishCampaignUpdated(id);
 
     const campaign = await getCampaignWithRelations(id);
     return NextResponse.json(campaign);
@@ -189,9 +195,14 @@ export async function PUT(
   }
 }
 
-// DELETE campaign (admin only)
+function isPermanentDeleteQuery(request: NextRequest): boolean {
+  const v = request.nextUrl.searchParams.get('permanent');
+  return v === '1' || v?.toLowerCase() === 'true';
+}
+
+// DELETE campaign (admin only): default soft-delete; `?permanent=1` removes campaign row and related enduser_events
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -209,8 +220,27 @@ export async function DELETE(
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }
 
-    await db.delete(campaigns).where(eq(campaigns.id, id));
-    return NextResponse.json({ success: true });
+    if (isPermanentDeleteQuery(request)) {
+      await publishCampaignUpdated(id);
+      await db.transaction(async (tx) => {
+        await tx.delete(enduserEvents).where(eq(enduserEvents.campaignId, id));
+        await tx.delete(campaigns).where(eq(campaigns.id, id));
+      });
+      return NextResponse.json({ success: true, permanent: true });
+    }
+
+    if (existing.status === 'deleted') {
+      return NextResponse.json({ success: true, softDeleted: true, alreadySoftDeleted: true });
+    }
+
+    const now = new Date();
+    await ensureCampaignStatusDeletedEnumReady();
+    await publishCampaignUpdated(id);
+    await db
+      .update(campaigns)
+      .set({ status: 'deleted', updatedAt: now })
+      .where(eq(campaigns.id, id));
+    return NextResponse.json({ success: true, softDeleted: true });
   } catch (error) {
     console.error('Error deleting campaign:', error);
     return NextResponse.json({ error: 'Failed to delete campaign' }, { status: 500 });

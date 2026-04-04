@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
-import { verifySession } from '@/lib/dal';
+import { getSessionWithRole } from '@/lib/dal';
 import { getConnectionCount } from '@/lib/redis';
 
 /**
  * GET /api/realtime/count
  * Returns the current number of extension users connected to the live SSE channel.
- * Admin-only (requires valid session).
+ * Requires a valid session (any dashboard role).
  */
 export async function GET() {
-  const session = await verifySession();
+  const session = await getSessionWithRole();
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

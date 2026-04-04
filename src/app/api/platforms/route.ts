@@ -34,9 +34,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, domain, isActive } = body;
+    const { name, domain } = body as { name?: unknown; domain?: unknown };
 
-    if (!name || !domain) {
+    if (typeof name !== 'string' || typeof domain !== 'string' || !name || !domain) {
       return NextResponse.json(
         { error: 'Name and domain are required' },
         { status: 400 }
@@ -70,7 +70,6 @@ export async function POST(request: NextRequest) {
       .values({
         name,
         domain: normalizedDomain,
-        isActive: isActive ?? true,
       })
       .returning();
 

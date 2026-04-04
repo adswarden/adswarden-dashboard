@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
 import { ads } from '@/db/schema';
 import { getSessionWithRole } from '@/lib/dal';
+import { getLinkedCampaignCountByAdId } from '@/lib/campaign-linked-counts';
+import { publishAdsUpdated } from '@/lib/redis';
 
 // GET all ads (content-only, no platform/status/dates)
 export async function GET() {
@@ -11,8 +13,17 @@ export async function GET() {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const allAds = await db.select().from(ads).orderBy(ads.createdAt);
-    return NextResponse.json(allAds);
+    const [allAds, linkedByAdId] = await Promise.all([
+      db.select().from(ads).orderBy(ads.createdAt),
+      getLinkedCampaignCountByAdId(),
+    ]);
+
+    const data = allAds.map((row) => ({
+      ...row,
+      linkedCampaignCount: linkedByAdId.get(row.id) ?? 0,
+    }));
+
+    return NextResponse.json(data);
   } catch (error) {
     console.error('Error fetching ads:', error);
     return NextResponse.json({ error: 'Failed to fetch ads' }, { status: 500 });
@@ -47,6 +58,7 @@ export async function POST(request: NextRequest) {
       })
       .returning();
 
+    await publishAdsUpdated();
     return NextResponse.json(newAd, { status: 201 });
   } catch (error) {
     console.error('Error creating ad:', error);

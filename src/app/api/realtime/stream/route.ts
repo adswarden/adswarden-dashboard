@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { verifySession } from '@/lib/dal';
+import { getSessionWithRole } from '@/lib/dal';
 import {
   createRedisClient,
   getConnectionCount,
@@ -17,7 +17,7 @@ function sseEvent(name: string, data: string): Uint8Array {
 /**
  * GET /api/realtime/stream
  * SSE stream for live connection count. Subscribes to Redis; sends connection_count events.
- * Admin-only (requires valid session). Dashboard uses this instead of polling GET /api/realtime/count.
+ * Requires a valid session (any dashboard role). Dashboard uses this instead of polling GET /api/realtime/count.
  *
  * CRITICAL: This endpoint must NEVER call incrConnectionCount/decrConnectionCount. Dashboard
  * connections to this stream must not be counted — only extension users on /api/extension/live
@@ -25,7 +25,7 @@ function sseEvent(name: string, data: string): Uint8Array {
  * extension user count.
  */
 export async function GET(request: NextRequest) {
-  const session = await verifySession();
+  const session = await getSessionWithRole();
   if (!session) {
     return new Response(JSON.stringify({ error: 'Unauthorized' }), {
       status: 401,

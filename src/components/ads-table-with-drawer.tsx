@@ -11,19 +11,26 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { IconPlus, IconPencil } from '@tabler/icons-react';
 import { DeleteButton } from '@/components/delete-button';
 import { AdEditDrawer } from '@/components/ad-edit-drawer';
+import { formatDateTimeUtcEnGb } from '@/lib/utils';
 import type { Ad } from '@/db/schema';
 
+export type AdListRow = Ad & { linkedCampaignCount: number };
+
 interface AdsTableWithDrawerProps {
-  ads: Ad[];
+  ads: AdListRow[];
   initialEditId?: string | null;
+  isAdmin: boolean;
 }
 
-export function AdsTableWithDrawer({ ads, initialEditId }: AdsTableWithDrawerProps) {
+export function AdsTableWithDrawer({ ads, initialEditId, isAdmin }: AdsTableWithDrawerProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedAd, setSelectedAd] = useState<Ad | null>(null);
+  const [drawerMode, setDrawerMode] = useState<'view' | 'edit'>('view');
+  const [selectedAd, setSelectedAd] = useState<AdListRow | null>(null);
   const [selectedAdId, setSelectedAdId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -37,95 +44,157 @@ export function AdsTableWithDrawer({ ads, initialEditId }: AdsTableWithDrawerPro
           setSelectedAd(null);
           setSelectedAdId(initialEditId);
         }
+        setDrawerMode(isAdmin ? 'edit' : 'view');
         setDrawerOpen(true);
       });
     }
-  }, [initialEditId, ads]);
+  }, [initialEditId, ads, isAdmin]);
 
-  const openDrawer = (ad: Ad) => {
+  const openDrawer = (ad: AdListRow, mode: 'view' | 'edit') => {
     setSelectedAd(ad);
     setSelectedAdId(null);
+    setDrawerMode(mode);
     setDrawerOpen(true);
   };
 
+  const openRow = (ad: AdListRow) => openDrawer(ad, 'view');
+  const colCount = isAdmin ? 5 : 4;
+
   return (
     <>
-      <div className="flex flex-col gap-4 p-4 md:p-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold">Ads</h1>
-            <p className="text-muted-foreground">Manage your ad content library</p>
+      <div className="flex flex-col gap-6 p-4 md:p-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-1">
+            <h1 className="text-2xl font-semibold tracking-tight">Ads</h1>
+            <p className="text-sm text-muted-foreground">Manage your ad content library</p>
           </div>
-          <Button asChild>
-            <Link href="/ads/new">
-              <IconPlus className="mr-2 h-4 w-4" />
-              Add Ad
-            </Link>
-          </Button>
+          {isAdmin ? (
+            <Button asChild className="shrink-0 self-start sm:self-auto">
+              <Link href="/ads/new">
+                <IconPlus className="mr-2 h-4 w-4" />
+                Add Ad
+              </Link>
+            </Button>
+          ) : null}
         </div>
 
-        <div className="rounded-md border">
-          <Table>
+        <div className="overflow-hidden rounded-lg border border-border/80 bg-card/30 shadow-sm">
+          <Table className="table-fixed">
             <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Target URL</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+              <TableRow className="hover:bg-transparent">
+                <TableHead className="h-12 min-w-0 w-[34%] px-4 py-3 font-medium">Name</TableHead>
+                <TableHead className="h-12 min-w-0 w-[20%] px-4 py-3 font-medium">
+                  Target URL
+                </TableHead>
+                <TableHead className="h-12 min-w-0 w-[8%] px-4 py-3 text-center font-medium tabular-nums">
+                  Campaigns
+                </TableHead>
+                <TableHead className="h-12 min-w-0 w-[26%] px-4 py-3 font-medium">Created</TableHead>
+                {isAdmin ? (
+                  <TableHead className="h-12 min-w-0 w-[12%] px-4 py-3 text-right font-medium">
+                    Actions
+                  </TableHead>
+                ) : null}
               </TableRow>
             </TableHeader>
             <TableBody>
               {ads.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                    No ads found. Create your first ad.
+                  <TableCell
+                    colSpan={colCount}
+                    className="px-4 py-12 text-center text-sm text-muted-foreground"
+                  >
+                    {isAdmin ? 'No ads found. Create your first ad.' : 'No ads found.'}
                   </TableCell>
                 </TableRow>
               ) : (
                 ads.map((ad) => (
                   <TableRow
                     key={ad.id}
-                    className="cursor-pointer hover:bg-muted/50"
-                    onClick={() => openDrawer(ad)}
+                    className="min-h-[52px] cursor-pointer transition-colors hover:bg-muted/40"
+                    tabIndex={0}
+                    onClick={() => openRow(ad)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        openRow(ad);
+                      }
+                    }}
                   >
-                    <TableCell className="font-medium">{ad.name}</TableCell>
-                    <TableCell className="max-w-xs truncate" onClick={(e) => e.stopPropagation()}>
+                    <TableCell className="min-w-0 px-4 py-3 align-middle font-medium">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-block max-w-full cursor-pointer truncate align-middle">
+                            {ad.name}
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-sm text-balance">
+                          {ad.name}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell className="min-w-0 overflow-hidden px-4 py-3 align-middle">
                       {ad.targetUrl ? (
-                        <a
-                          href={ad.targetUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary hover:underline"
-                        >
-                          {ad.targetUrl}
-                        </a>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <a
+                              href={ad.targetUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-block max-w-full cursor-pointer truncate text-primary underline-offset-4 hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {ad.targetUrl}
+                            </a>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="max-w-sm break-all">
+                            {ad.targetUrl}
+                          </TooltipContent>
+                        </Tooltip>
                       ) : (
-                        '-'
+                        <span className="text-sm text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(ad.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openDrawer(ad);
-                          }}
-                        >
-                          <IconPencil className="h-4 w-4" />
-                        </Button>
-                        <DeleteButton
-                          id={ad.id}
-                          name={ad.name}
-                          entityType="ad"
-                          apiPath={`/api/ads/${ad.id}`}
-                        />
+                    <TableCell className="min-w-0 px-4 py-3 align-middle tabular-nums">
+                      <div className="flex justify-center">
+                        {ad.linkedCampaignCount > 0 ? (
+                          <Badge
+                            variant="secondary"
+                            className="min-w-7 justify-center px-2.5 py-0.5 tabular-nums font-medium"
+                          >
+                            {ad.linkedCampaignCount}
+                          </Badge>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
                       </div>
                     </TableCell>
+                    <TableCell
+                      className="min-w-0 px-4 py-3 align-middle text-sm tabular-nums text-muted-foreground"
+                      title="UTC"
+                    >
+                      {formatDateTimeUtcEnGb(ad.createdAt)}
+                    </TableCell>
+                    {isAdmin ? (
+                      <TableCell
+                        className="min-w-0 px-4 py-3 text-right align-middle"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9"
+                            aria-label={`Edit ${ad.name}`}
+                            onClick={() => openDrawer(ad, 'edit')}
+                          >
+                            <IconPencil className="h-4 w-4" />
+                          </Button>
+                          <DeleteButton name={ad.name} entityType="ad" apiPath={`/api/ads/${ad.id}`} />
+                        </div>
+                      </TableCell>
+                    ) : null}
                   </TableRow>
                 ))
               )}
@@ -139,6 +208,8 @@ export function AdsTableWithDrawer({ ads, initialEditId }: AdsTableWithDrawerPro
         onOpenChange={setDrawerOpen}
         ad={selectedAd}
         adId={selectedAdId ?? undefined}
+        initialMode={drawerMode}
+        showEditAction={isAdmin}
       />
     </>
   );

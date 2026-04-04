@@ -1,124 +1,119 @@
-import { ChartAreaInteractive } from '@/components/chart-area-interactive';
+import { ChartAreaInteractiveDynamic } from '@/components/chart-area-interactive-dynamic';
 import { LiveConnectionsCard } from '@/components/live-connections-card';
 import { SectionCards } from '@/components/section-cards';
+import { getSessionWithRole } from '@/lib/dal';
+import { redirect } from 'next/navigation';
 import { database as db } from '@/db';
-import { campaigns, visitors } from '@/db/schema';
-import { eq, sql, desc, isNotNull } from 'drizzle-orm';
+import { campaigns, enduserEvents, endUsers } from '@/db/schema';
+import { DASHBOARD_SERVED_EVENT_TYPES } from '@/lib/events-dashboard';
+import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { campaignRowNotSoftDeleted } from '@/lib/campaign-soft-delete-sql';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { IconPencil } from '@tabler/icons-react';
+import { IconPlus } from '@tabler/icons-react';
+import { RecentCampaignsTable } from '@/components/recent-campaigns-table';
+import type { Metadata } from 'next';
+
+export const metadata: Metadata = {
+  title: 'Dashboard',
+};
 
 export const dynamic = 'force-dynamic';
 
 export default async function DashboardPage() {
-  const [activeCampaignsCount, totalCampaignsCount, logsCount, visitorsCount, recentCampaigns] =
+  const session = await getSessionWithRole();
+  if (!session) redirect('/login');
+
+  const campaignActiveWhere = eq(campaigns.status, 'active');
+  const totalCampaignsWhere = campaignRowNotSoftDeleted;
+
+  const totalCampaignsPromise = db
+    .select({ count: sql<number>`count(*)` })
+    .from(campaigns)
+    .where(totalCampaignsWhere);
+
+  const impressionsCountPromise = db
+    .select({ count: sql<number>`count(*)` })
+    .from(enduserEvents)
+    .where(
+      and(
+        isNotNull(enduserEvents.campaignId),
+        inArray(enduserEvents.type, DASHBOARD_SERVED_EVENT_TYPES)
+      )
+    );
+
+  const recentCampaignsPromise = db
+    .select()
+    .from(campaigns)
+    .where(campaignRowNotSoftDeleted)
+    .orderBy(desc(campaigns.createdAt))
+    .limit(10);
+
+  const extensionUsersPromise = db.select({ count: sql<number>`count(*)` }).from(endUsers);
+
+  const [activeCampaignsCount, totalCampaignsCount, impressionsCount, extensionUsersCount, recentCampaigns] =
     await Promise.all([
       db
         .select({ count: sql<number>`count(*)` })
         .from(campaigns)
-        .where(eq(campaigns.status, 'active')),
-      db.select({ count: sql<number>`count(*)` }).from(campaigns),
-      db
-        .select({ count: sql<number>`count(*)` })
-        .from(visitors)
-        .where(isNotNull(visitors.campaignId)),
-      db.select({ count: sql<number>`count(DISTINCT ${visitors.visitorId})` }).from(visitors),
-      db.select().from(campaigns).orderBy(desc(campaigns.createdAt)).limit(10),
+        .where(campaignActiveWhere),
+      totalCampaignsPromise,
+      impressionsCountPromise,
+      extensionUsersPromise,
+      recentCampaignsPromise,
     ]);
 
   const activeCampaigns = Number(activeCampaignsCount[0]?.count || 0);
   const totalCampaigns = Number(totalCampaignsCount[0]?.count || 0);
-  const campaignLogsCount = Number(logsCount[0]?.count || 0);
-  const activeUsers = Number(visitorsCount[0]?.count || 0);
+  const campaignImpressions = Number(impressionsCount[0]?.count || 0);
+  const activeUsers = Number(extensionUsersCount[0]?.count || 0);
+  const isAdmin = session.role === 'admin';
 
   return (
-    <div className="flex flex-col gap-4 py-4 md:gap-6 md:py-6">
+    <div className="flex flex-col gap-6 p-4 md:p-6">
+      <div className="space-y-1">
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          Extension activity, campaign impressions, and recent campaigns.
+        </p>
+      </div>
+
       <SectionCards
         activeCampaigns={activeCampaigns}
         totalCampaigns={totalCampaigns}
-        campaignLogs={campaignLogsCount}
+        campaignImpressions={campaignImpressions}
         activeUsers={activeUsers}
         extraCard={<LiveConnectionsCard />}
       />
-      <div className="px-4 lg:px-6">
-        <ChartAreaInteractive />
-      </div>
-      <div className="px-4 lg:px-6">
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold">Recent Campaigns</h2>
-          <p className="text-sm text-muted-foreground">Latest campaigns</p>
-        </div>
-        <div className="rounded-md border">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Created</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recentCampaigns.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
-                    No campaigns yet. Create your first campaign.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                recentCampaigns.map((c) => (
-                  <TableRow key={c.id}>
-                    <TableCell className="font-medium">
-                      <Link
-                        href={`/campaigns/${c.id}`}
-                        className="hover:underline text-foreground"
-                      >
-                        {c.name}
-                      </Link>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{c.campaignType}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          c.status === 'active'
-                            ? 'default'
-                            : c.status === 'expired'
-                              ? 'destructive'
-                              : 'secondary'
-                        }
-                      >
-                        {c.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(c.createdAt).toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" asChild>
-                        <Link href={`/campaigns/${c.id}/edit`}>
-                          <IconPencil className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
+
+      <ChartAreaInteractiveDynamic />
+
+      <section className="relative z-10 isolate">
+        <div className="rounded-xl border border-border bg-card/40 shadow-none">
+          <div className="flex flex-col gap-2 border-b p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+            <div className="min-w-0 space-y-1">
+              <h2 className="text-lg font-semibold">Recent campaigns</h2>
+              <p className="text-sm text-muted-foreground">
+                Latest updates in your workspace
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/campaigns">View all</Link>
+              </Button>
+              {isAdmin && (
+                <Button variant="outline" size="sm" asChild>
+                  <Link href="/campaigns/new">
+                    <IconPlus className="h-4 w-4" />
+                    New campaign
+                  </Link>
+                </Button>
               )}
-            </TableBody>
-          </Table>
+            </div>
+          </div>
+          <RecentCampaignsTable campaigns={recentCampaigns} isAdmin={isAdmin} />
         </div>
-      </div>
+      </section>
     </div>
   );
 }

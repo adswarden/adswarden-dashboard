@@ -1,23 +1,35 @@
 #!/usr/bin/env npx tsx
+import path from 'path';
+import dotenv from 'dotenv';
+
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true });
+
 /**
- * Load test script: simulates extension requests across multiple domains
+ * Load test: extension ad-block requests with Bearer auth (multi-domain).
  *
- * - Multiple domains (US-focused for country code testing)
- * - 10 requests per domain
- * - Simple user/visitor IDs
- * - Country code from CF/Vercel headers (cf-ipcountry, x-vercel-ip-country)
+ * Requires extension user credentials (same as POST /api/extension/auth/login):
+ *   EXTENSION_EMAIL, EXTENSION_PASSWORD
  *
  * Usage:
- *   BASE_URL=https://your-domain.com pnpm tsx scripts/load-test-extension.ts
- *   pnpm load-test:extension
- *
- * Note: Use a deployed domain behind Cloudflare or Vercel so country is auto-detected.
+ *   EXTENSION_EMAIL=a@b.com EXTENSION_PASSWORD=secret pnpm load-test:extension
+ * Host: BASE_URL, or else BETTER_AUTH_BASE_URL / BETTER_AUTH_URL from .env.local (same as app auth).
  */
 
-const BASE_URL = process.env.BASE_URL || 'https://test.buildyourresume.in';
-const REQUESTS_PER_DOMAIN = 10;
+function resolveBaseUrl(): string {
+  return (
+    process.env.BASE_URL?.trim() ||
+    process.env.BETTER_AUTH_BASE_URL?.trim() ||
+    process.env.BETTER_AUTH_URL?.trim() ||
+    ''
+  );
+}
 
-// Domains to test (page domains the user is visiting)
+const BASE_URL = resolveBaseUrl();
+const REQUESTS_PER_DOMAIN = 10;
+const EXTENSION_EMAIL = process.env.EXTENSION_EMAIL?.trim();
+const EXTENSION_PASSWORD = process.env.EXTENSION_PASSWORD;
+
 const DOMAINS = [
   'test.buildyourresume.in',
   'edition.cnn.com',
@@ -25,9 +37,6 @@ const DOMAINS = [
   'example.com',
   'youtube.com',
 ];
-
-// Simple IDs for testing
-const VISITOR_IDS = ['user-1', 'visitor-1'];
 
 interface DomainResult {
   domain: string;
@@ -42,19 +51,40 @@ interface DomainResult {
   }>;
 }
 
+async function loginExtensionUser(): Promise<string> {
+  if (!EXTENSION_EMAIL || !EXTENSION_PASSWORD) {
+    throw new Error(
+      'Set EXTENSION_EMAIL and EXTENSION_PASSWORD (extension user login). Create user via POST /api/extension/auth/register if needed.'
+    );
+  }
+  const res = await fetch(`${BASE_URL}/api/extension/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: EXTENSION_EMAIL, password: EXTENSION_PASSWORD }),
+  });
+  const data = (await res.json().catch(() => ({}))) as { token?: string; error?: string };
+  if (!res.ok) {
+    throw new Error(data.error || `Login HTTP ${res.status}`);
+  }
+  if (!data.token) {
+    throw new Error('Login response missing token');
+  }
+  return data.token;
+}
+
 async function makeAdBlockRequest(
-  visitorId: string,
+  token: string,
   domain: string,
   logErrors: boolean
 ): Promise<{ ok: boolean; status: number; adsCount: number; notifsCount: number; errorBody?: string }> {
   try {
     const res = await fetch(`${BASE_URL}/api/extension/ad-block`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        visitorId,
-        domain,
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ domain }),
     });
     let adsCount = 0;
     let notifsCount = 0;
@@ -83,7 +113,7 @@ async function makeAdBlockRequest(
   }
 }
 
-async function testDomain(domain: string): Promise<DomainResult> {
+async function testDomain(token: string, domain: string): Promise<DomainResult> {
   const result: DomainResult = {
     domain,
     success: 0,
@@ -91,10 +121,8 @@ async function testDomain(domain: string): Promise<DomainResult> {
     responses: [],
   };
 
-  const visitorId = VISITOR_IDS[DOMAINS.indexOf(domain) % VISITOR_IDS.length];
-
   for (let i = 0; i < REQUESTS_PER_DOMAIN; i++) {
-    const resp = await makeAdBlockRequest(visitorId, domain, result.failed === 0);
+    const resp = await makeAdBlockRequest(token, domain, result.failed === 0);
     result.responses.push({
       request: i + 1,
       status: resp.status,
@@ -124,20 +152,29 @@ function logDomainResult(result: DomainResult) {
 }
 
 async function main() {
-  console.log('Extension Load Test (Multi-Domain)');
+  if (!BASE_URL) {
+    console.error(
+      'Set BASE_URL or BETTER_AUTH_BASE_URL or BETTER_AUTH_URL (e.g. in .env.local) to your dashboard origin.'
+    );
+    process.exit(1);
+  }
+
+  console.log('Extension Load Test (Multi-Domain, Bearer auth)');
   console.log('==================================================');
   console.log(`Base URL: ${BASE_URL}`);
   console.log(`Domains: ${DOMAINS.join(', ')}`);
   console.log(`Requests per domain: ${REQUESTS_PER_DOMAIN}`);
-  console.log(`Visitor IDs: ${VISITOR_IDS.join(', ')}`);
-  console.log('(Country from CF/Vercel headers)');
+  console.log('(Country from CF/Vercel headers when deployed)');
   console.log('');
+
+  const token = await loginExtensionUser();
+  console.log('Extension user login OK.\n');
 
   const start = Date.now();
   const results: DomainResult[] = [];
 
   for (const domain of DOMAINS) {
-    const result = await testDomain(domain);
+    const result = await testDomain(token, domain);
     results.push(result);
     logDomainResult(result);
   }

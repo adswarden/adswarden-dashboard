@@ -43,27 +43,28 @@ flowchart TB
 - **Components**: Reusable UI components built with shadcn/ui
 
 #### 2. API Layer
-- **Extension API** (`/api/extension/ad-block`)
-  - Public endpoint (no authentication)
-  - **Ads**: domain-based filtering with normalization
-  - **Notifications**: global (no domain); per-user read tracking so each notification is returned only until the user has pulled it (by `visitorId`)
-  - Automatic visit logging for analytics
+- **Extension API** (`/api/extension/ad-block`, `/api/extension/serve/ads`, `/api/extension/events`, `/api/extension/live`, `/api/extension/auth/*`, `/api/extension/domains`)
+  - **v2:** **`GET /api/extension/live`** (SSE) sends full `init` (platforms, campaigns, frequency) — auth via **`Authorization: Bearer`** or **`?token=`**
+  - **`POST /api/extension/serve/ads`** — Bearer; per-visit **ads + popup** only; logs `enduser_events`
+  - **`POST /api/extension/events`** — Bearer; client-reported **notification** / **redirect** events
+  - **Legacy `POST /api/extension/ad-block`** — Bearer; combined ads / notifications / redirects
+  - **Notifications / redirects (v2):** matched client-side from SSE payload; telemetry via **`events`** or legacy ad-block
+  - **`GET /api/extension/domains`** — public list of platform domains (optional if using v2 `init`)
   
-- **Admin API** (`/api/platforms`, `/api/ads`, `/api/notifications`)
+- **Admin API** (`/api/platforms`, `/api/ads`, `/api/notifications`, `/api/redirects`)
   - Protected endpoints (require authentication)
   - Full CRUD operations
   - Admin-only access
 
-- **Auth API** (`/api/auth/login`, `/api/auth/logout`)
-  - Session management
-  - JWT token generation/validation
-  - Cookie-based authentication
+- **Auth API** (`/api/auth/*` — Better Auth)
+  - Email/password sign-in and sign-out
+  - Session stored in HTTP-only cookie (managed by Better Auth + Drizzle adapter)
 
 #### 3. Data Layer
 - **PostgreSQL**: Primary data store
-  - Platforms, Ads, Notifications
-  - Extension Users, Request Logs
-  - Relationships and constraints
+  - Platforms, ads, notifications, campaigns
+  - Extension end users (`end_users`, `enduser_sessions`, `enduser_events`, `payments`)
+  - Better Auth tables for dashboard admins
 
 ## Request Flow
 
@@ -79,7 +80,7 @@ sequenceDiagram
     
     Admin->>UI: Access Dashboard
     UI->>Auth: Verify Session
-    Auth->>Auth: Check JWT Cookie
+    Auth->>Auth: Check Better Auth session cookie
     alt Session Valid
         Auth->>UI: Session Valid
         UI->>API: Fetch Data
@@ -100,12 +101,11 @@ sequenceDiagram
     participant API as Extension API
     participant DB as PostgreSQL
     
-    Ext->>API: POST /api/extension/ad-block<br/>{visitorId, domain, requestType?}
-    API->>DB: Resolve Platform (normalized domain)
-    API->>DB: Query Active Ads and/or Notifications
+    Ext->>API: POST /api/extension/ad-block<br/>Bearer token + {domain, requestType?}
+    API->>DB: Resolve session → end_users
+    API->>DB: Resolve platform/ads/notifications (campaign rules)
     DB->>API: Return Data
-    API->>DB: Upsert Extension User
-    API->>DB: Insert Request Log(s)
+    API->>DB: Insert enduser_events
     API->>Ext: {ads: [...], notifications: [...]}
 ```
 
@@ -122,12 +122,12 @@ sequenceDiagram
 
 ### Extension Fetching Ads and Notifications
 
-1. **Extension**: Provides stable `visitorId`; sends domain for ads and logging
-2. **API Call**: POST `/api/extension/ad-block` with `{visitorId, domain, requestType?}`
-3. **Database**: Resolves platform by domain for ads; for notifications, fetches global active notifications excluding those already pulled by this `visitorId`
-4. **Response**: Returns `{ads: [...], notifications: [...]}` (always arrays; public fields only)
-5. **Extension**: Displays ads (per domain) and notifications (e.g. once per day when extension loads)
-6. **Logging**: Automatic - visit(s) logged to `request_logs` and `extension_users` updated
+1. **Extension**: User signs in; sends **Bearer token** and `domain` / `requestType` for pulls
+2. **API Call**: POST `/api/extension/ad-block` with `Authorization: Bearer` and JSON body
+3. **Database**: Resolves `end_users` from token; applies campaign/platform rules for ads and notifications
+4. **Response**: `{ ads: [...], notifications: [...] }`
+5. **Extension**: Renders content; may use SSE `/api/extension/live` for realtime signals
+6. **Logging**: Inserts **`enduser_events`**; may update **`end_users`** (e.g. country)
 
 ## API Endpoints Summary
 
@@ -141,7 +141,7 @@ sequenceDiagram
 - `DELETE /api/platforms/[id]` - Delete platform
 
 #### Ads
-- `GET /api/ads` - List all ads (admin view with platform info)
+- `GET /api/ads` - List all ads (admin view with platform info). Each row includes `linkedCampaignCount` (count of campaigns with this `ad_id`).
 - `GET /api/ads?domain={domain}` - Get active ads for domain (admin/testing use)
 - `POST /api/ads` - Create ad
 - `GET /api/ads/[id]` - Get ad details
@@ -149,25 +149,33 @@ sequenceDiagram
 - `DELETE /api/ads/[id]` - Delete ad
 
 #### Notifications
-- `GET /api/notifications` - List all notifications (admin view; global, no domain filter)
+- `GET /api/notifications` - List all notifications (admin view; global, no domain filter). Paginated `data` items include `linkedCampaignCount`.
 - `POST /api/notifications` - Create notification (global)
 - `GET /api/notifications/[id]` - Get notification details
 - `PUT /api/notifications/[id]` - Update notification
 - `DELETE /api/notifications/[id]` - Delete notification
 
-### Extension API (Public - No Authentication)
+#### Redirects
+- `GET /api/redirects` - List redirects. Each row includes `linkedCampaignCount`.
+- `POST /api/redirects` - Create redirect
+- `GET /api/redirects/[id]` - Get redirect details
+- `PUT /api/redirects/[id]` - Update redirect
+- `DELETE /api/redirects/[id]` - Delete redirect
 
-- `POST /api/extension/ad-block` - Get ads and/or notifications and automatically log visit(s)
-  - Body: `{visitorId: string, domain: string, requestType?: "ad" | "notification"}`
-  - Ads: filtered by domain (platform). Notifications: global; only returns notifications the user has not yet pulled (tracked by `visitorId`)
-  - If `requestType` omitted, returns both; response: `{ads: [...], notifications: [...]}` (arrays, public fields only)
-- `POST /api/extension/ad-block` with `requestType: "notification"` - Get notifications only (on extension load)
-  - Body: `{visitorId: string}`. Response: `{notifications: [...]}`. Use for notifications-only calls (e.g. once per day on extension load).
+### Extension API
+
+- `POST /api/extension/auth/register` | `login` | `logout` | `me` — extension **end user** accounts (separate from Better Auth).
+- `POST /api/extension/ad-block` — **Requires `Authorization: Bearer`**
+  - Body: `{ domain?: string, requestType?: "ad" | "notification", userAgent?: string }`
+  - Response: `{ ads: [...], notifications: [...], redirects: [...] }`
+- `GET /api/extension/live` — **SSE**, **requires Bearer or `?token=`**; `event: init` + Redis-driven updates
+- `POST /api/extension/serve/ads` — **Bearer**; body `{ domain, userAgent? }`; response `{ ads: [...] }`
+- `POST /api/extension/events` — **Bearer**; body `{ events: [{ campaignId, domain, type: "redirect"|"notification" }] }`
+- `GET /api/extension/domains` — active platform domains (public).
 
 ### Authentication API
 
-- `POST /api/auth/login` - Admin login (creates session)
-- `POST /api/auth/logout` - Admin logout (destroys session)
+- `GET|POST /api/auth/*` — Better Auth handler (`sign-in`, `sign-out`, session, etc.). Dashboard login uses the Better Auth client against these routes.
 
 ## Design Patterns
 
@@ -223,21 +231,18 @@ async function autoExpireAds() {
 
 ## Security Architecture
 
-### Authentication Flow
+### Authentication Flow (dashboard)
 
-1. Admin submits credentials via `/api/auth/login`
-2. Server validates against environment variables
-3. JWT token generated with 7-day expiration
-4. Token stored in HTTP-only cookie
-5. Subsequent requests include cookie automatically
-6. Protected routes verify token before rendering
+1. User submits credentials via the login UI using the Better Auth client (`/api/auth/*`).
+2. Better Auth validates the user (Drizzle `user` / `session` tables).
+3. A session is established and stored in an HTTP-only cookie.
+4. Subsequent requests send the cookie; `getSessionWithRole` / `verifySession` read it per route or layout.
 
 ### Session Management
 
-- **Storage**: HTTP-only cookies (not accessible via JavaScript)
+- **Storage**: HTTP-only cookies (Better Auth)
 - **Security**: Secure flag in production (HTTPS required)
-- **Expiration**: 7 days from creation
-- **Validation**: JWT signature verification on each request
+- **Validation**: Better Auth session verification on protected routes and APIs
 
 ### Data Protection
 
@@ -310,7 +315,7 @@ async function autoExpireAds() {
 - **Database**: PostgreSQL
 - **ORM**: Drizzle ORM
 - **UI**: React 19, Tailwind CSS 4, shadcn/ui
-- **Auth**: JWT (Jose library)
+- **Auth**: Better Auth (dashboard); Bearer sessions for extension end users (`enduser_sessions`)
 - **Charts**: Recharts
 - **Icons**: Tabler Icons
 
