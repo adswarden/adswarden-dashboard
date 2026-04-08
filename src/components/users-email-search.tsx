@@ -12,8 +12,12 @@ const DEBOUNCE_MS = 500;
 export function UsersEmailSearch() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const emailFromUrl = searchParams.get('email') ?? '';
-  const [value, setValue] = useState(emailFromUrl);
+  const searchFromUrl =
+    searchParams.get('q')?.trim() ||
+    searchParams.get('email')?.trim() ||
+    searchParams.get('endUserId')?.trim() ||
+    '';
+  const [value, setValue] = useState(searchFromUrl);
   const searchParamsRef = useRef(searchParams);
 
   useEffect(() => {
@@ -21,13 +25,15 @@ export function UsersEmailSearch() {
   }, [searchParams]);
 
   useEffect(() => {
-    setValue(emailFromUrl);
-  }, [emailFromUrl]);
+    setValue(searchFromUrl);
+  }, [searchFromUrl]);
 
-  const clearEmail = useCallback(() => {
+  const clearSearch = useCallback(() => {
     setValue('');
     const params = new URLSearchParams(searchParamsRef.current.toString());
+    params.delete('q');
     params.delete('email');
+    params.delete('endUserId');
     params.delete('page');
     const next = params.toString();
     router.push(next ? `/users?${next}` : '/users');
@@ -37,12 +43,17 @@ export function UsersEmailSearch() {
     const timer = window.setTimeout(() => {
       const trimmed = value.trim();
       const params = searchParamsRef.current;
-      const emailInUrl = (params.get('email') ?? '').trim();
-      if (trimmed === emailInUrl) return;
+      const qInUrl = (params.get('q') ?? '').trim();
+      const legacyEmail = (params.get('email') ?? '').trim();
+      const endUserInUrl = (params.get('endUserId') ?? '').trim();
+      const inUrl = qInUrl || legacyEmail || endUserInUrl;
+      if (trimmed === inUrl) return;
 
       const nextParams = new URLSearchParams(params.toString());
-      if (trimmed) nextParams.set('email', trimmed);
-      else nextParams.delete('email');
+      nextParams.delete('email');
+      nextParams.delete('endUserId');
+      if (trimmed) nextParams.set('q', trimmed);
+      else nextParams.delete('q');
       nextParams.delete('page');
       const next = nextParams.toString();
       router.push(next ? `/users?${next}` : '/users');
@@ -76,7 +87,7 @@ export function UsersEmailSearch() {
           variant="ghost"
           size="icon-sm"
           className="absolute right-1 top-1/2 h-7 w-7 -translate-y-1/2 rounded-full text-muted-foreground hover:text-foreground"
-          onClick={clearEmail}
+          onClick={clearSearch}
           aria-label="Clear search"
         >
           <IconX className="h-4 w-4" aria-hidden />

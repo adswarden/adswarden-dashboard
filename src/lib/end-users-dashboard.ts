@@ -13,9 +13,8 @@ import { getQueryParam } from '@/lib/url-search-params';
 import { escapeCsvCell, escapeIlikePattern } from '@/lib/utils';
 
 export type EndUsersDashboardFilters = {
+  /** Multi-field match: email, identifier, UUID, name (`q` URL param; legacy `email` merged in parser). */
   q?: string;
-  /** Toolbar / quick search: partial match on email only (distinct from multi-field `q`). */
-  email?: string;
   joinedFrom?: string;
   joinedTo?: string;
   lastSeenFrom?: string;
@@ -31,6 +30,9 @@ export function parseEndUsersDashboardFilters(
 ): EndUsersDashboardFilters {
   const q = getQueryParam(sp, 'q');
   const endUserId = getQueryParam(sp, 'endUserId');
+  const emailLegacy = getQueryParam(sp, 'email');
+  /** Prefer explicit `q`, then deep-link `endUserId`, then legacy toolbar `email` (all trimmed via getQueryParam). */
+  const qMerged = q ?? endUserId ?? emailLegacy;
   const planRaw = getQueryParam(sp, 'plan')?.toLowerCase();
   const plan =
     planRaw === 'trial' || planRaw === 'paid' ? (planRaw as 'trial' | 'paid') : undefined;
@@ -39,8 +41,7 @@ export function parseEndUsersDashboardFilters(
   if (bannedRaw === 'true' || bannedRaw === '1') banned = true;
   else if (bannedRaw === 'false' || bannedRaw === '0') banned = false;
   return {
-    q: q ?? endUserId,
-    email: getQueryParam(sp, 'email'),
+    q: qMerged,
     joinedFrom: getQueryParam(sp, 'joinedFrom'),
     joinedTo: getQueryParam(sp, 'joinedTo'),
     lastSeenFrom: getQueryParam(sp, 'lastSeenFrom'),
@@ -63,26 +64,24 @@ const sessionStats = db
 /** Text equality so `end_users.id` (uuid) joins legacy `end_user_id` stored as varchar. */
 const endUserSessionJoin = sql`cast(${endUsers.id} as text) = cast(${sessionStats.endUserId} as text)`;
 
+/** Partial match across email, identifier, UUID text, and display name. */
+function endUserMultiFieldSearchOr(raw: string): SQL {
+  const escaped = escapeIlikePattern(raw);
+  const pattern = `%${escaped}%`;
+  return or(
+    ilike(endUsers.email, pattern),
+    ilike(sql`coalesce(${endUsers.identifier}, '')`, pattern),
+    ilike(sql`cast(${endUsers.id} as text)`, pattern),
+    ilike(endUsers.name, pattern)
+  )!;
+}
+
 /** Shared filter predicates (same join keys as list query). */
 function buildEndUsersWhereConditions(filters: EndUsersDashboardFilters): SQL[] {
   const conditions: SQL[] = [];
 
-  if (filters.email?.trim()) {
-    const escaped = escapeIlikePattern(filters.email.trim());
-    conditions.push(ilike(endUsers.email, `%${escaped}%`));
-  }
-
-  if (filters.q) {
-    const escaped = escapeIlikePattern(filters.q);
-    const pattern = `%${escaped}%`;
-    conditions.push(
-      or(
-        ilike(endUsers.email, pattern),
-        ilike(sql`coalesce(${endUsers.identifier}, '')`, pattern),
-        ilike(sql`cast(${endUsers.id} as text)`, pattern),
-        ilike(endUsers.name, pattern)
-      )!
-    );
+  if (filters.q?.trim()) {
+    conditions.push(endUserMultiFieldSearchOr(filters.q.trim()));
   }
 
   if (filters.joinedFrom) {
@@ -129,7 +128,7 @@ function buildEndUsersWhereConditions(filters: EndUsersDashboardFilters): SQL[] 
 
 export type UsersFilterChipDescriptor = {
   id: string;
-  /** Query keys to remove when clearing this chip (e.g. search clears both `q` and `endUserId`). */
+  /** Query keys to remove when clearing this chip (search clears `q`, deep-link `endUserId`, and legacy toolbar `email`). */
   urlKeys: string[];
   label: string;
   display: string;
@@ -156,20 +155,12 @@ export function usersFilterChips(
   urlFlags: { hasQParam: boolean; hasEndUserIdParam: boolean }
 ): UsersFilterChipDescriptor[] {
   const chips: UsersFilterChipDescriptor[] = [];
-  if (filters.email?.trim()) {
-    chips.push({
-      id: 'email',
-      urlKeys: ['email'],
-      label: 'Email',
-      display: usersChipTruncate(filters.email.trim(), 36),
-    });
-  }
   if (filters.q?.trim()) {
     const label =
       urlFlags.hasEndUserIdParam && !urlFlags.hasQParam ? 'End user' : 'Search';
     chips.push({
       id: 'search',
-      urlKeys: ['q', 'endUserId'],
+      urlKeys: ['q', 'endUserId', 'email'],
       label,
       display: usersChipTruncate(filters.q.trim(), 36),
     });

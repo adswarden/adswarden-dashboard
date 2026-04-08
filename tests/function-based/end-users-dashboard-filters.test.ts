@@ -21,9 +21,18 @@ describe('end-users-dashboard filters (end_users schema)', () => {
       expect(parseEndUsersDashboardFilters(sp).q).toBe('abc');
     });
 
-    it('prefers q over endUserId', () => {
-      const sp = new URLSearchParams({ q: 'from-q', endUserId: 'from-end' });
+    it('prefers q over endUserId and legacy email', () => {
+      const sp = new URLSearchParams({
+        q: 'from-q',
+        endUserId: 'from-end',
+        email: 'from-email',
+      });
       expect(parseEndUsersDashboardFilters(sp).q).toBe('from-q');
+    });
+
+    it('prefers endUserId over legacy email when q absent', () => {
+      const sp = new URLSearchParams({ endUserId: 'uuid-here', email: 'a@b.co' });
+      expect(parseEndUsersDashboardFilters(sp).q).toBe('uuid-here');
     });
 
     it('parses banned as true/false', () => {
@@ -54,7 +63,7 @@ describe('end-users-dashboard filters (end_users schema)', () => {
       ).toBeUndefined();
     });
 
-    it('passes through joined / last-seen / country / email', () => {
+    it('maps legacy email param into q; passes through joined / last-seen / country', () => {
       const sp = new URLSearchParams({
         email: 'a@b.co',
         joinedFrom: '2026-01-01',
@@ -64,7 +73,7 @@ describe('end-users-dashboard filters (end_users schema)', () => {
         country: 'us',
       });
       const f = parseEndUsersDashboardFilters(sp);
-      expect(f.email).toBe('a@b.co');
+      expect(f.q).toBe('a@b.co');
       expect(f.joinedFrom).toBe('2026-01-01');
       expect(f.joinedTo).toBe('2026-01-31');
       expect(f.lastSeenFrom).toBe('2026-02-01');

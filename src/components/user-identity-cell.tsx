@@ -76,6 +76,10 @@ export function UserIdentityCell({
             side="top"
             className="max-w-[min(90vw,480px)] space-y-1 overflow-x-auto text-left [&_p]:whitespace-nowrap"
           >
+            <p className="font-mono text-xs">
+              <span className="text-muted-foreground">ID: </span>
+              {endUserId}
+            </p>
             {identifier ? (
               <p className="font-mono text-xs">
                 <span className="text-muted-foreground">Identifier: </span>

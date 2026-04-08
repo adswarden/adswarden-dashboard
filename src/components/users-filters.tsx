@@ -98,6 +98,7 @@ export function UsersFilters({
         }
       })
       params.delete("endUserId")
+      params.delete("email")
       params.delete("page")
       params.delete("browser")
       params.delete("os")

@@ -84,7 +84,6 @@ export default async function UsersPage({
     .map((code) => ({ code, name: getCountryName(code) }));
 
   const filterParams: Record<string, string> = {};
-  if (filters.email) filterParams.email = filters.email;
   if (filters.q) filterParams.q = filters.q;
   if (filters.joinedFrom) filterParams.joinedFrom = filters.joinedFrom;
   if (filters.joinedTo) filterParams.joinedTo = filters.joinedTo;

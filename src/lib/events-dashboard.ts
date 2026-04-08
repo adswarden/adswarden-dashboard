@@ -363,9 +363,7 @@ export function eventsFilterChips(filters: EventsDashboardFilters): EventsFilter
 
 export function eventsToCsvLines(rows: EventLogRow[]): string[] {
   const header = [
-    'id',
-    'userIdentifier',
-    'endUserUuid',
+    'endUserId',
     'email',
     'plan',
     'campaignId',
@@ -379,8 +377,6 @@ export function eventsToCsvLines(rows: EventLogRow[]): string[] {
   for (const r of rows) {
     lines.push(
       [
-        r.id,
-        r.userIdentifier,
         r.endUserUuid ?? '',
         r.email ?? '',
         r.plan ?? '',
