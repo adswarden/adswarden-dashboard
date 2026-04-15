@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -15,8 +16,20 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { IconTrash, IconLoader2, IconBan, IconAlertTriangle } from '@tabler/icons-react';
 import { toast } from 'sonner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { LinkedCampaigns } from '@/components/linked-campaigns';
 
 const entityLabels = {
   ad: {
@@ -54,6 +67,8 @@ const campaignDualDialogCopy = {
 
 type EntityType = keyof typeof entityLabels;
 
+export type LinkedDeleteHelpType = 'ad' | 'notification' | 'redirect' | 'platform';
+
 type DeleteButtonProps = {
   name: string;
   apiPath: string;
@@ -61,8 +76,19 @@ type DeleteButtonProps = {
   redirectTo?: string;
 } & (
   | { entityType: 'campaign'; campaignStatus: string }
-  | { entityType: Exclude<EntityType, 'campaign'> }
+  | {
+      entityType: Exclude<EntityType, 'campaign'>;
+      /** When true, delete is blocked (e.g. content linked to campaigns). */
+      disabled?: boolean;
+      /** Shown in a tooltip when `disabled` is true. */
+      disabledReason?: string;
+      /** When delete is blocked, lists campaigns and explains next steps (popover + links). */
+      linkedHelp?: { type: LinkedDeleteHelpType; entityId: string };
+    }
 );
+
+const contentDeleteTriggerClass =
+  'text-destructive hover:text-destructive hover:bg-destructive/10';
 
 function deleteRequestUrl(apiPath: string, permanent: boolean): string {
   if (!permanent) return apiPath;
@@ -301,6 +327,9 @@ export function DeleteButton(props: DeleteButtonProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [mounted, setMounted] = useState(false);
   const labels = useMemo(() => entityLabels[entityType], [entityType]);
+  const disabled = entityType !== 'campaign' && props.disabled === true;
+  const disabledReason = entityType !== 'campaign' ? props.disabledReason : undefined;
+  const linkedHelp = entityType !== 'campaign' ? props.linkedHelp : undefined;
 
   useEffect(() => setMounted(true), []);
 
@@ -342,17 +371,126 @@ export function DeleteButton(props: DeleteButtonProps) {
 
   if (!mounted) {
     return (
-      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10" disabled tabIndex={-1}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={contentDeleteTriggerClass}
+        disabled
+        tabIndex={-1}
+      >
         <IconTrash className="h-4 w-4" />
         <span className="sr-only">Delete {entityType}</span>
       </Button>
     );
   }
 
+  if (linkedHelp && disabledReason) {
+    return (
+      <Dialog>
+        <DialogTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className={cn(contentDeleteTriggerClass)}
+            aria-label={`Delete ${entityType}: blocked because it is used by campaigns. Opens details.`}
+          >
+            <IconTrash className="h-4 w-4" aria-hidden />
+            <span className="sr-only">Delete {entityType} — see campaigns using this item</span>
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="flex max-h-[min(92vh,40rem)] w-full flex-col gap-0 overflow-hidden border-border/80 p-0 sm:max-w-xl">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-6 pb-4 pt-6 sm:px-8 sm:pb-6 sm:pt-8">
+            <div className="flex flex-col gap-6">
+              <DialogHeader className="space-y-3 pr-10 text-left sm:pr-12">
+                <DialogTitle className="text-balance text-lg font-semibold leading-snug tracking-tight">
+                  Cannot delete &quot;{name}&quot;
+                </DialogTitle>
+                <DialogDescription asChild>
+                  <p className="text-pretty text-sm leading-relaxed text-muted-foreground">{disabledReason}</p>
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3">
+                <h3
+                  className="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+                  id={`blocked-delete-campaigns-${linkedHelp.entityId}`}
+                >
+                  Linked campaigns
+                </h3>
+                <div
+                  className="max-h-60 min-h-0 scroll-py-2 overflow-y-auto overflow-x-hidden rounded-lg border border-border/70 bg-muted/10"
+                  role="region"
+                  aria-labelledby={`blocked-delete-campaigns-${linkedHelp.entityId}`}
+                >
+                  <LinkedCampaigns
+                    type={linkedHelp.type}
+                    entityId={linkedHelp.entityId}
+                    embedded
+                    variant="popover"
+                    editLinks
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 flex-col-reverse gap-3 border-t border-border/80 bg-muted/10 px-6 py-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:space-x-0 sm:px-8">
+            <Button
+              variant="outline"
+              size="default"
+              className="h-10 min-h-10 w-full border-border bg-background font-medium shadow-xs hover:bg-muted/50 sm:w-auto"
+              asChild
+            >
+              <Link href="/campaigns">All campaigns</Link>
+            </Button>
+            <DialogClose asChild>
+              <Button type="button" variant="default" className="h-10 min-h-10 w-full sm:w-auto">
+                Done
+              </Button>
+            </DialogClose>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (disabled) {
+    const trashButton = (
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className={cn(contentDeleteTriggerClass, 'opacity-50')}
+        disabled
+        aria-label={
+          disabledReason
+            ? `Delete unavailable: ${disabledReason}`
+            : `Cannot delete ${entityType}`
+        }
+      >
+        <IconTrash className="h-4 w-4" aria-hidden />
+        <span className="sr-only">Delete {entityType} (unavailable)</span>
+      </Button>
+    );
+    return disabledReason ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex">{trashButton}</span>
+        </TooltipTrigger>
+        <TooltipContent side="left" className="max-w-xs text-balance">
+          {disabledReason}
+        </TooltipContent>
+      </Tooltip>
+    ) : (
+      trashButton
+    );
+  }
+
   return (
     <AlertDialog>
       <AlertDialogTrigger asChild>
-        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive hover:bg-destructive/10">
+        <Button variant="ghost" size="icon" className={contentDeleteTriggerClass}>
           <IconTrash className="h-4 w-4" />
           <span className="sr-only">Delete {entityType}</span>
         </Button>

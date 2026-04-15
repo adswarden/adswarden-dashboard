@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import { platforms } from '@/db/schema';
+import { platforms, redirects } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
 import { normalizeDomain } from '@/lib/domain-utils';
+import { findRedirectConflictForPlatform } from '@/lib/redirect-platform-conflict';
 import { publishPlatformsUpdated } from '@/lib/redis';
 
 // GET all platforms
@@ -45,6 +46,22 @@ export async function POST(request: NextRequest) {
 
     // Normalize domain (extract hostname from URL if needed)
     const normalizedDomain = normalizeDomain(domain);
+
+    const redirectRows = await db
+      .select({
+        sourceDomain: redirects.sourceDomain,
+        includeSubdomains: redirects.includeSubdomains,
+      })
+      .from(redirects);
+    const redirectHit = findRedirectConflictForPlatform(normalizedDomain, redirectRows);
+    if (redirectHit !== undefined) {
+      return NextResponse.json(
+        {
+          error: `This domain is already covered by a redirect rule (source: ${redirectHit.sourceDomain}). Change or remove the redirect first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     // Check if name or domain already exists
     const [existingByName, existingByDomain] = await Promise.all([

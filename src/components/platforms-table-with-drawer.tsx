@@ -180,6 +180,17 @@ export function PlatformsTableWithDrawer({
                             name={platform.name}
                             entityType="platform"
                             apiPath={`/api/platforms/${platform.id}`}
+                            disabled={platform.linkedCampaignCount > 0}
+                            disabledReason={
+                              platform.linkedCampaignCount > 0
+                                ? `Targeted by ${platform.linkedCampaignCount} campaign(s). Unlink or remove those campaigns first.`
+                                : undefined
+                            }
+                            linkedHelp={
+                              platform.linkedCampaignCount > 0
+                                ? { type: 'platform', entityId: platform.id }
+                                : undefined
+                            }
                           />
                         </div>
                       </TableCell>

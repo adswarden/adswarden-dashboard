@@ -191,7 +191,22 @@ export function AdsTableWithDrawer({ ads, initialEditId, isAdmin }: AdsTableWith
                           >
                             <IconPencil className="h-4 w-4" />
                           </Button>
-                          <DeleteButton name={ad.name} entityType="ad" apiPath={`/api/ads/${ad.id}`} />
+                          <DeleteButton
+                            name={ad.name}
+                            entityType="ad"
+                            apiPath={`/api/ads/${ad.id}`}
+                            disabled={ad.linkedCampaignCount > 0}
+                            disabledReason={
+                              ad.linkedCampaignCount > 0
+                                ? `Used by ${ad.linkedCampaignCount} campaign(s). Unlink or remove those campaigns first.`
+                                : undefined
+                            }
+                            linkedHelp={
+                              ad.linkedCampaignCount > 0
+                                ? { type: 'ad', entityId: ad.id }
+                                : undefined
+                            }
+                          />
                         </div>
                       </TableCell>
                     ) : null}

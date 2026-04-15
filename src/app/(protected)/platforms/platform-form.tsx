@@ -1,13 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { IconLoader2 } from '@tabler/icons-react';
 import { toast } from 'sonner';
-import type { Platform } from '@/db/schema';
+import { cn } from '@/lib/utils';
+import type { Platform, Redirect } from '@/db/schema';
+import { findRedirectConflictForPlatform } from '@/lib/redirect-platform-conflict';
 
 interface PlatformFormProps {
   platform?: Platform;
@@ -23,6 +25,33 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
   const [isLoading, setIsLoading] = useState(false);
   const [name, setName] = useState(platform?.name || '');
   const [domain, setDomain] = useState(platform?.domain || '');
+  const [redirectRules, setRedirectRules] = useState<
+    { sourceDomain: string; includeSubdomains: boolean }[] | null
+  >(null);
+  const [domainFieldError, setDomainFieldError] = useState<string | null>(null);
+  const [nameFieldError, setNameFieldError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/redirects')
+      .then(async (res) => {
+        if (!res.ok) return [];
+        const data = (await res.json()) as (Redirect & { linkedCampaignCount?: number })[];
+        return data.map((r) => ({
+          sourceDomain: r.sourceDomain,
+          includeSubdomains: r.includeSubdomains,
+        }));
+      })
+      .then((rows) => {
+        if (!cancelled) setRedirectRules(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setRedirectRules([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const extractDomainFromInput = (input: string): string => {
     const trimmed = input.trim();
@@ -43,11 +72,25 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
     if (extracted !== domain) {
       setDomain(extracted);
     }
+    if (!extracted || !redirectRules) {
+      setDomainFieldError(null);
+      return;
+    }
+    const hit = findRedirectConflictForPlatform(extracted, redirectRules);
+    if (hit !== undefined) {
+      const msg = `This domain is already covered by a redirect rule (source: ${hit.sourceDomain}). Change or remove the redirect first.`;
+      setDomainFieldError(msg);
+      toast.error(msg);
+    } else {
+      setDomainFieldError(null);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setDomainFieldError(null);
+    setNameFieldError(null);
 
     try {
       const url = mode === 'create' ? '/api/platforms' : `/api/platforms/${platform?.id}`;
@@ -62,7 +105,17 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to save platform');
+        const msg =
+          typeof data.error === 'string' ? data.error : 'Failed to save platform';
+        if (response.status === 409) {
+          if (msg.includes('name already exists')) {
+            setNameFieldError(msg);
+          } else {
+            setDomainFieldError(msg);
+          }
+          return;
+        }
+        throw new Error(msg);
       }
 
       toast.success(mode === 'create' ? 'Platform created successfully' : 'Platform updated successfully');
@@ -86,11 +139,22 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
         <Input
           id="name"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(e) => {
+            setName(e.target.value);
+            setNameFieldError(null);
+          }}
           placeholder="Platform name"
           required
           disabled={isLoading}
+          aria-invalid={nameFieldError ? true : undefined}
+          aria-describedby={nameFieldError ? 'platform-name-error' : undefined}
+          className={cn(nameFieldError && 'border-destructive focus-visible:ring-destructive/30')}
         />
+        {nameFieldError ? (
+          <p id="platform-name-error" role="alert" className="text-sm text-destructive">
+            {nameFieldError}
+          </p>
+        ) : null}
       </div>
 
       <div className="space-y-2">
@@ -98,19 +162,37 @@ export function PlatformForm({ platform, mode, onSuccess, onCancel }: PlatformFo
         <Input
           id="domain"
           value={domain}
-          onChange={(e) => setDomain(e.target.value)}
+          onChange={(e) => {
+            setDomain(e.target.value);
+            setDomainFieldError(null);
+          }}
           onBlur={handleDomainBlur}
           placeholder="example.com or https://www.example.com"
           required
           disabled={isLoading}
+          aria-invalid={domainFieldError ? true : undefined}
+          aria-describedby={
+            domainFieldError ? 'platform-domain-error' : 'platform-domain-hint'
+          }
+          className={cn(domainFieldError && 'border-destructive focus-visible:ring-destructive/30')}
         />
-        <p className="text-sm text-muted-foreground">
-          Enter domain or subdomain (e.g., instagram.com, www.instagram.com). Full URLs will be automatically extracted.
-        </p>
+        {domainFieldError ? (
+          <p id="platform-domain-error" role="alert" className="text-sm text-destructive">
+            {domainFieldError}
+          </p>
+        ) : (
+          <p id="platform-domain-hint" className="text-sm text-muted-foreground">
+            Enter domain or subdomain (e.g., instagram.com, www.instagram.com). Full URLs will be
+            automatically extracted.
+          </p>
+        )}
       </div>
 
       <div className="flex gap-2 pt-4">
-        <Button type="submit" disabled={isLoading}>
+        <Button
+          type="submit"
+          disabled={isLoading || !!domainFieldError || !!nameFieldError}
+        >
           {isLoading ? (
             <>
               <IconLoader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -8,7 +8,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { IconLoader2 } from '@tabler/icons-react';
 import { toast } from 'sonner';
-import type { Redirect } from '@/db/schema';
+import { cn } from '@/lib/utils';
+import type { Platform, Redirect } from '@/db/schema';
+import { findPlatformDomainConflictForRedirect } from '@/lib/redirect-platform-conflict';
 
 interface RedirectFormProps {
   redirect?: Redirect;
@@ -24,10 +26,69 @@ export function RedirectForm({ redirect: redirectRow, mode, onSuccess, onCancel 
   const [sourceDomain, setSourceDomain] = useState(redirectRow?.sourceDomain || '');
   const [includeSubdomains, setIncludeSubdomains] = useState(redirectRow?.includeSubdomains ?? false);
   const [destinationUrl, setDestinationUrl] = useState(redirectRow?.destinationUrl || '');
+  const [platformRows, setPlatformRows] = useState<{ domain: string | null }[] | null>(null);
+  const [sourceDomainFieldError, setSourceDomainFieldError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/platforms')
+      .then(async (res) => {
+        if (!res.ok) return [];
+        const data = (await res.json()) as Platform[];
+        return data.map((p) => ({ domain: p.domain }));
+      })
+      .then((rows) => {
+        if (!cancelled) setPlatformRows(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPlatformRows([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const extractHostnameFromInput = useCallback((input: string): string => {
+    const trimmed = input.trim();
+    if (!trimmed) return '';
+    try {
+      const url = trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+      return new URL(url).hostname;
+    } catch {
+      return trimmed;
+    }
+  }, []);
+
+  const applySourceDomainConflictCheck = (
+    host: string,
+    includeSubdomainsValue: boolean
+  ) => {
+    if (!host || !platformRows) {
+      setSourceDomainFieldError(null);
+      return;
+    }
+    const hit = findPlatformDomainConflictForRedirect(host, includeSubdomainsValue, platformRows);
+    if (hit !== undefined) {
+      const msg = `Source domain overlaps platform hostname “${hit}”. Change this rule or remove the platform first.`;
+      setSourceDomainFieldError(msg);
+      toast.error(msg);
+    } else {
+      setSourceDomainFieldError(null);
+    }
+  };
+
+  const handleSourceDomainBlur = () => {
+    const extracted = extractHostnameFromInput(sourceDomain);
+    if (extracted !== sourceDomain) {
+      setSourceDomain(extracted);
+    }
+    applySourceDomainConflictCheck(extracted, includeSubdomains);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setSourceDomainFieldError(null);
 
     try {
       const url = mode === 'create' ? '/api/redirects' : `/api/redirects/${redirectRow?.id}`;
@@ -47,7 +108,13 @@ export function RedirectForm({ redirect: redirectRow, mode, onSuccess, onCancel 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to save redirect');
+        const msg =
+          typeof data.error === 'string' ? data.error : 'Failed to save redirect';
+        if (response.status === 409) {
+          setSourceDomainFieldError(msg);
+          return;
+        }
+        throw new Error(msg);
       }
 
       toast.success(mode === 'create' ? 'Redirect created successfully' : 'Redirect updated successfully');
@@ -83,14 +150,29 @@ export function RedirectForm({ redirect: redirectRow, mode, onSuccess, onCancel 
         <Input
           id="source-domain"
           value={sourceDomain}
-          onChange={(e) => setSourceDomain(e.target.value)}
+          onChange={(e) => {
+            setSourceDomain(e.target.value);
+            setSourceDomainFieldError(null);
+          }}
+          onBlur={handleSourceDomainBlur}
           placeholder="example.com"
           required
           disabled={isLoading}
+          aria-invalid={sourceDomainFieldError ? true : undefined}
+          aria-describedby={
+            sourceDomainFieldError ? 'source-domain-error' : 'source-domain-hint'
+          }
+          className={cn(sourceDomainFieldError && 'border-destructive focus-visible:ring-destructive/30')}
         />
-        <p className="text-xs text-muted-foreground">
-          Hostname to match (no protocol). Enable &quot;Include subdomains&quot; to match *.example.com.
-        </p>
+        {sourceDomainFieldError ? (
+          <p id="source-domain-error" role="alert" className="text-sm text-destructive">
+            {sourceDomainFieldError}
+          </p>
+        ) : (
+          <p id="source-domain-hint" className="text-xs text-muted-foreground">
+            Hostname to match (no protocol). Enable &quot;Include subdomains&quot; to match *.example.com.
+          </p>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-4 rounded-lg border border-input/80 bg-muted/20 px-4 py-3">
@@ -103,7 +185,11 @@ export function RedirectForm({ redirect: redirectRow, mode, onSuccess, onCancel 
         <Switch
           id="include-subdomains"
           checked={includeSubdomains}
-          onCheckedChange={setIncludeSubdomains}
+          onCheckedChange={(checked) => {
+            setIncludeSubdomains(checked);
+            const host = extractHostnameFromInput(sourceDomain);
+            applySourceDomainConflictCheck(host, checked);
+          }}
           disabled={isLoading}
         />
       </div>
@@ -122,7 +208,7 @@ export function RedirectForm({ redirect: redirectRow, mode, onSuccess, onCancel 
       </div>
 
       <div className="flex gap-2 pt-2">
-        <Button type="submit" disabled={isLoading}>
+        <Button type="submit" disabled={isLoading || !!sourceDomainFieldError}>
           {isLoading ? (
             <>
               <IconLoader2 className="mr-2 h-4 w-4 animate-spin" />

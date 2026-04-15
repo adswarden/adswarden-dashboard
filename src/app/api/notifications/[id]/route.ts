@@ -3,6 +3,7 @@ import { database as db } from '@/db';
 import { notifications } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
+import { getLinkedCampaignCountForNotificationId } from '@/lib/campaign-linked-counts';
 import { publishNotificationsUpdated } from '@/lib/redis';
 
 type RouteContext = {
@@ -93,6 +94,16 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
+
+    const linked = await getLinkedCampaignCountForNotificationId(id);
+    if (linked > 0) {
+      return NextResponse.json(
+        {
+          error: `Cannot delete this notification while it is used by ${linked} campaign(s). Unlink or remove those campaigns first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     const [deletedNotification] = await db
       .delete(notifications)

@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import { redirects } from '@/db/schema';
+import { platforms, redirects } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
+import { findPlatformDomainConflictForRedirect } from '@/lib/redirect-platform-conflict';
+import { getLinkedCampaignCountForRedirectId } from '@/lib/campaign-linked-counts';
 import { publishRedirectsUpdated } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
@@ -54,12 +56,29 @@ export async function PUT(request: NextRequest, context: RouteContext) {
       );
     }
 
+    const trimmedSource = String(sourceDomain).trim();
+    const includeSub = Boolean(includeSubdomains);
+    const platformRows = await db.select({ domain: platforms.domain }).from(platforms);
+    const conflictHost = findPlatformDomainConflictForRedirect(
+      trimmedSource,
+      includeSub,
+      platformRows
+    );
+    if (conflictHost !== undefined) {
+      return NextResponse.json(
+        {
+          error: `Source domain overlaps an existing platform hostname (${conflictHost}). Change the rule or remove the platform first.`,
+        },
+        { status: 409 }
+      );
+    }
+
     const [updated] = await db
       .update(redirects)
       .set({
         name,
-        sourceDomain: String(sourceDomain).trim(),
-        includeSubdomains: Boolean(includeSubdomains),
+        sourceDomain: trimmedSource,
+        includeSubdomains: includeSub,
         destinationUrl: String(destinationUrl).trim(),
         updatedAt: new Date(),
       })
@@ -89,6 +108,16 @@ export async function DELETE(_request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
+
+    const linked = await getLinkedCampaignCountForRedirectId(id);
+    if (linked > 0) {
+      return NextResponse.json(
+        {
+          error: `Cannot delete this redirect while it is used by ${linked} campaign(s). Unlink or remove those campaigns first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     const [deleted] = await db.delete(redirects).where(eq(redirects.id, id)).returning();
 

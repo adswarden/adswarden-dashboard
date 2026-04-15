@@ -1,6 +1,6 @@
 import { database as db } from '@/db';
 import { campaigns } from '@/db/schema';
-import { and, count, inArray, isNotNull } from 'drizzle-orm';
+import { and, arrayContains, count, eq, inArray, isNotNull } from 'drizzle-orm';
 import { campaignRowNotSoftDeleted } from '@/lib/campaign-soft-delete-sql';
 
 function rowsToMap(
@@ -89,4 +89,38 @@ export async function getAllContentLinkedCampaignCounts(): Promise<{
     getLinkedCampaignCountByRedirectId(),
   ]);
   return { byAdId, byNotificationId, byRedirectId };
+}
+
+export async function getLinkedCampaignCountForAdId(adId: string): Promise<number> {
+  const [row] = await db
+    .select({ c: count() })
+    .from(campaigns)
+    .where(and(eq(campaigns.adId, adId), campaignRowNotSoftDeleted));
+  return Number(row?.c ?? 0);
+}
+
+export async function getLinkedCampaignCountForNotificationId(
+  notificationId: string
+): Promise<number> {
+  const [row] = await db
+    .select({ c: count() })
+    .from(campaigns)
+    .where(and(eq(campaigns.notificationId, notificationId), campaignRowNotSoftDeleted));
+  return Number(row?.c ?? 0);
+}
+
+export async function getLinkedCampaignCountForRedirectId(redirectId: string): Promise<number> {
+  const [row] = await db
+    .select({ c: count() })
+    .from(campaigns)
+    .where(and(eq(campaigns.redirectId, redirectId), campaignRowNotSoftDeleted));
+  return Number(row?.c ?? 0);
+}
+
+export async function getLinkedCampaignCountForPlatformId(platformId: string): Promise<number> {
+  const [row] = await db
+    .select({ c: count() })
+    .from(campaigns)
+    .where(and(arrayContains(campaigns.platformIds, [platformId]), campaignRowNotSoftDeleted));
+  return Number(row?.c ?? 0);
 }

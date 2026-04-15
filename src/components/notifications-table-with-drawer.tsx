@@ -210,6 +210,17 @@ export function NotificationsTableWithDrawer({
                             name={notification.title}
                             entityType="notification"
                             apiPath={`/api/notifications/${notification.id}`}
+                            disabled={notification.linkedCampaignCount > 0}
+                            disabledReason={
+                              notification.linkedCampaignCount > 0
+                                ? `Used by ${notification.linkedCampaignCount} campaign(s). Unlink or remove those campaigns first.`
+                                : undefined
+                            }
+                            linkedHelp={
+                              notification.linkedCampaignCount > 0
+                                ? { type: 'notification', entityId: notification.id }
+                                : undefined
+                            }
                           />
                         </div>
                       </TableCell>

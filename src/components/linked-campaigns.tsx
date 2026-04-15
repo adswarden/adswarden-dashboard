@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
@@ -19,6 +19,12 @@ interface LinkedCampaignsProps {
   entityId: string;
   /** Hide section heading (use when parent already provides a title, e.g. platform drawer sidebar). */
   embedded?: boolean;
+  /**
+   * `popover` — compact list, no drawer animation (for delete guard popovers and small surfaces).
+   */
+  variant?: 'default' | 'popover';
+  /** When true, campaign links go to `/campaigns/[id]/edit` instead of the detail page. */
+  editLinks?: boolean;
 }
 
 /**
@@ -43,7 +49,7 @@ function DrawerContentReveal({ children }: { children: ReactNode }) {
   return (
     <div
       className={cn(
-        'motion-safe:transition-[opacity,transform] motion-safe:duration-200 motion-safe:ease-out',
+        'motion-safe:transition-[opacity,transform] motion-safe:duration-300 motion-safe:ease-out',
         visible ? 'motion-safe:opacity-100 motion-safe:translate-y-0' : 'motion-safe:opacity-0 motion-safe:translate-y-1',
         'motion-reduce:opacity-100 motion-reduce:translate-y-0'
       )}
@@ -107,7 +113,19 @@ function loadLinkedCampaigns(apiPath: string): Promise<LinkedCampaign[]> {
   return p;
 }
 
-export function LinkedCampaigns({ type, entityId, embedded = false }: LinkedCampaignsProps) {
+function ListStateWrapper({ revealKey, children }: { revealKey: string; children: ReactNode }) {
+  return <DrawerContentReveal key={revealKey}>{children}</DrawerContentReveal>;
+}
+
+export function LinkedCampaigns({
+  type,
+  entityId,
+  embedded = false,
+  variant: layoutVariant = 'default',
+  editLinks = false,
+}: LinkedCampaignsProps) {
+  const campaignHref = (id: string) =>
+    editLinks ? `/campaigns/${id}/edit` : `/campaigns/${id}`;
   const [campaigns, setCampaigns] = useState<LinkedCampaign[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -156,12 +174,18 @@ export function LinkedCampaigns({ type, entityId, embedded = false }: LinkedCamp
     return (
       <div
         className={cn(
-          'flex items-center gap-2 text-sm text-muted-foreground',
-          embedded ? 'min-h-24 justify-center px-4 py-8' : 'py-2'
+          'flex items-center gap-2 text-muted-foreground',
+          layoutVariant === 'popover' && 'justify-center px-2 py-3 text-xs',
+          layoutVariant !== 'popover' && 'text-sm',
+          embedded && layoutVariant !== 'popover' ? 'min-h-24 justify-center px-4 py-8' : !embedded && 'py-2'
         )}
       >
         <IconLoader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-        {embedded ? 'Loading campaigns…' : 'Loading linked campaigns...'}
+        {embedded && layoutVariant !== 'popover'
+          ? 'Loading campaigns…'
+          : layoutVariant === 'popover'
+            ? 'Loading…'
+            : 'Loading linked campaigns...'}
       </div>
     );
   }
@@ -169,7 +193,11 @@ export function LinkedCampaigns({ type, entityId, embedded = false }: LinkedCamp
   if (error) {
     return (
       <p
-        className={cn('text-sm leading-relaxed text-destructive', embedded ? 'px-4 py-3' : 'py-2')}
+        className={cn(
+          'leading-relaxed text-destructive',
+          layoutVariant === 'popover' ? 'px-2 py-2 text-xs' : 'text-sm',
+          embedded && layoutVariant !== 'popover' ? 'px-4 py-3' : layoutVariant !== 'popover' && !embedded && 'py-2'
+        )}
         role="alert"
       >
         {error}
@@ -182,13 +210,18 @@ export function LinkedCampaigns({ type, entityId, embedded = false }: LinkedCamp
   if (campaigns.length === 0) {
     if (embedded) {
       return (
-        <DrawerContentReveal key={revealKey}>
-          <p className="px-4 py-3 text-sm leading-relaxed text-muted-foreground">
+        <ListStateWrapper revealKey={revealKey}>
+          <p
+            className={cn(
+              'leading-relaxed text-muted-foreground',
+              layoutVariant === 'popover' ? 'px-2 py-2 text-xs' : 'px-4 py-3 text-sm'
+            )}
+          >
             {type === 'platform'
               ? 'No campaigns include this platform in their target list yet.'
               : 'Not linked to any campaigns.'}
           </p>
-        </DrawerContentReveal>
+        </ListStateWrapper>
       );
     }
     return (
@@ -205,37 +238,63 @@ export function LinkedCampaigns({ type, entityId, embedded = false }: LinkedCamp
   }
 
   const listLabel = embedded ? 'Campaigns targeting this platform' : 'Linked campaigns';
+  const isPopover = layoutVariant === 'popover';
 
   if (embedded) {
     return (
-      <DrawerContentReveal key={revealKey}>
-        <ul className="divide-y divide-border" aria-label={listLabel}>
-          {campaigns.map((c) => (
-            <li key={c.id}>
-              <Link
-                href={`/campaigns/${c.id}`}
-                className="group flex min-h-11 flex-col gap-2 px-4 py-3 text-sm outline-none transition-colors hover:bg-muted/35 focus-visible:bg-muted/35 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex-row sm:items-center sm:gap-3"
-              >
-                <span className="min-w-0 flex-1 font-medium leading-snug text-foreground sm:truncate">
-                  {c.name}
-                  <span className="sr-only"> — Open campaign</span>
-                </span>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="border-border/80 px-2 py-0.5 capitalize tabular-nums">
-                    {c.campaignType}
-                  </Badge>
-                  <Badge
-                    variant={campaignStatusBadgeVariant(c.status)}
-                    className="px-2 py-0.5 capitalize tabular-nums"
-                  >
-                    {c.status}
-                  </Badge>
-                </div>
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </DrawerContentReveal>
+      <ListStateWrapper revealKey={revealKey}>
+        <Fragment>
+          {isPopover ? (
+            <p
+              className="px-4 py-3 text-xs leading-relaxed text-muted-foreground"
+              id={`linked-campaigns-hint-${entityId}`}
+            >
+              {editLinks
+                ? 'Unlink or replace this content in a campaign (opens edit), then try again.'
+                : 'Open a campaign to change or remove its content, then you can delete this item.'}
+            </p>
+          ) : null}
+          <ul className="divide-y divide-border" aria-label={listLabel}>
+            {campaigns.map((c) => (
+              <li key={c.id}>
+                <Link
+                  href={campaignHref(c.id)}
+                  className={cn(
+                    'flex flex-col gap-2 outline-none transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex-row sm:items-center sm:gap-3',
+                    isPopover
+                      ? 'min-h-12 gap-3 px-4 py-4 text-sm sm:min-h-11'
+                      : 'min-h-11 px-4 py-3 text-sm'
+                  )}
+                >
+                  <span className="min-w-0 flex-1 font-medium leading-snug text-foreground sm:truncate">
+                    {c.name}
+                    <span className="sr-only">
+                      {editLinks ? ' — Edit campaign' : ' — Open campaign'}
+                    </span>
+                  </span>
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        'border-border/80 capitalize tabular-nums',
+                        isPopover ? 'px-1.5 py-0 text-xs' : 'px-2 py-0.5'
+                      )}
+                    >
+                      {c.campaignType}
+                    </Badge>
+                    <Badge
+                      variant={campaignStatusBadgeVariant(c.status)}
+                      className={cn('capitalize tabular-nums', isPopover ? 'px-1.5 py-0 text-xs' : 'px-2 py-0.5')}
+                    >
+                      {c.status}
+                    </Badge>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </Fragment>
+      </ListStateWrapper>
     );
   }
 
@@ -244,7 +303,7 @@ export function LinkedCampaigns({ type, entityId, embedded = false }: LinkedCamp
       {campaigns.map((c) => (
         <li key={c.id}>
           <Link
-            href={`/campaigns/${c.id}`}
+            href={campaignHref(c.id)}
             className="flex min-h-11 items-center gap-2 rounded-md border border-border/80 bg-card/30 px-3 py-2 text-sm transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <span className="min-w-0 flex-1 truncate font-medium leading-snug">{c.name}</span>

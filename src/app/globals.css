@@ -121,6 +121,11 @@
     @apply border-border outline-ring/50;
   }
 
+  /* Reserve space for the scrollbar so Radix dialog scroll-lock does not shift layout. */
+  html {
+    scrollbar-gutter: stable;
+  }
+
   body {
     @apply bg-background text-foreground;
   }

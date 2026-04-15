@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import { redirects } from '@/db/schema';
+import { platforms, redirects } from '@/db/schema';
 import { getSessionWithRole } from '@/lib/dal';
+import { findPlatformDomainConflictForRedirect } from '@/lib/redirect-platform-conflict';
 import { getLinkedCampaignCountByRedirectId } from '@/lib/campaign-linked-counts';
 import { publishRedirectsUpdated } from '@/lib/redis';
 
@@ -51,12 +52,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const trimmedSource = String(sourceDomain).trim();
+    const includeSub = Boolean(includeSubdomains);
+    const platformRows = await db.select({ domain: platforms.domain }).from(platforms);
+    const conflictHost = findPlatformDomainConflictForRedirect(
+      trimmedSource,
+      includeSub,
+      platformRows
+    );
+    if (conflictHost !== undefined) {
+      return NextResponse.json(
+        {
+          error: `Source domain overlaps an existing platform hostname (${conflictHost}). Change the rule or remove the platform first.`,
+        },
+        { status: 409 }
+      );
+    }
+
     const [created] = await db
       .insert(redirects)
       .values({
         name,
-        sourceDomain: String(sourceDomain).trim(),
-        includeSubdomains: Boolean(includeSubdomains),
+        sourceDomain: trimmedSource,
+        includeSubdomains: includeSub,
         destinationUrl: String(destinationUrl).trim(),
       })
       .returning();
