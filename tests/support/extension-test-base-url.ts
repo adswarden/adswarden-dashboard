@@ -5,6 +5,9 @@
  *
  * Requires `EXTENSION_INTEGRATION=1` (or `EXTENSION_INTEGRATION_RUN=1`) so `pnpm test`
  * stays offline-safe when `.env.local` points at localhost but no dev server is up.
+ *
+ * If the auth base URL returns 502 (staging tunnel, etc.), prefer
+ * `EXTENSION_INTEGRATION_BASE_URL=http://127.0.0.1:3000` while `pnpm dev` runs.
  */
 export function extensionIntegrationBaseUrl(): string {
   const enabled =

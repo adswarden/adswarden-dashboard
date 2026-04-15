@@ -11,13 +11,9 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { DateDisplayToggleButton } from '@/components/date-display-toggle-button';
+import { ExportCampaignLogsCsvButton } from '@/components/export-campaign-logs-csv-button';
+import { HumanReadableDate } from '@/components/human-readable-date';
 import {
   Sheet,
   SheetContent,
@@ -63,18 +59,8 @@ function isWithinInteractiveControl(target: EventTarget | null): boolean {
   );
 }
 
-const TYPE_OPTIONS = [
-  { value: 'all', label: 'All types' },
-  { value: 'ad', label: 'Ad' },
-  { value: 'notification', label: 'Notification' },
-  { value: 'popup', label: 'Popup' },
-  { value: 'redirect', label: 'Redirect' },
-  { value: 'visit', label: 'Visit' },
-] as const;
-
 export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
   const [page, setPage] = React.useState(1);
-  const [typeFilter, setTypeFilter] = React.useState<string>('all');
   const [refreshNonce, setRefreshNonce] = React.useState(0);
   const [logs, setLogs] = React.useState<LogEntry[]>([]);
   const [totalCount, setTotalCount] = React.useState(0);
@@ -85,14 +71,13 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
 
   React.useEffect(() => {
     setPage(1);
-  }, [typeFilter, campaignId]);
+  }, [campaignId]);
 
   React.useEffect(() => {
     const ac = new AbortController();
     setLoading(true);
     setError(null);
-    const typeQ = typeFilter !== 'all' ? `&type=${encodeURIComponent(typeFilter)}` : '';
-    fetch(`/api/campaigns/${campaignId}/logs?page=${page}&pageSize=25${typeQ}`, {
+    fetch(`/api/campaigns/${campaignId}/logs?page=${page}&pageSize=25`, {
       signal: ac.signal,
     })
       .then((res) => {
@@ -113,7 +98,7 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [campaignId, page, refreshNonce, typeFilter]);
+  }, [campaignId, page, refreshNonce]);
 
   if (error) {
     return (
@@ -139,27 +124,6 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
           </p>
         </div>
         <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
-          <div>
-            <span id="log-type-filter-label" className="sr-only">
-              Filter logs by event type
-            </span>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger
-                className="w-full sm:w-[160px]"
-                aria-labelledby="log-type-filter-label"
-                disabled={loading}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {TYPE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
           <div className="flex items-center gap-2">
             {!loading && (totalPages > 0 || totalCount > 0) && (
               <TablePagination
@@ -171,6 +135,11 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
                 onPageChange={setPage}
               />
             )}
+            <ExportCampaignLogsCsvButton
+              campaignId={campaignId}
+              className="h-9 w-9 min-h-9 min-w-9"
+            />
+            <DateDisplayToggleButton className="h-9 w-9 min-h-9 min-w-9" />
             <Button
               variant="outline"
               size="icon-sm"
@@ -261,13 +230,7 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
                     <Badge variant="outline">{log.type}</Badge>
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
-                    {new Date(log.createdAt).toLocaleString(undefined, {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
+                    <HumanReadableDate date={new Date(log.createdAt)} />
                   </TableCell>
                 </TableRow>
               ))
@@ -283,10 +246,7 @@ export function CampaignLogsTable({ campaignId }: CampaignLogsTableProps) {
               <SheetHeader className="pr-8">
                 <SheetTitle className="break-words">Log event</SheetTitle>
                 <SheetDescription>
-                  {new Date(detail.createdAt).toLocaleString(undefined, {
-                    dateStyle: 'full',
-                    timeStyle: 'short',
-                  })}
+                  <HumanReadableDate date={new Date(detail.createdAt)} />
                 </SheetDescription>
               </SheetHeader>
               <div className="mt-6 flex flex-col gap-4 px-4 pb-6 text-sm">

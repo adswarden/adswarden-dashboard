@@ -30,14 +30,11 @@ const EVENT_TYPES = new Set<string>([
   'visit',
 ]);
 
-/** Types counted on the main dashboard chart and “served” KPI (campaign-linked only). */
-export const DASHBOARD_SERVED_EVENT_TYPES = ['ad', 'popup', 'notification'] as const;
+/** Served campaign impressions (campaign-linked KPI; excludes visits). */
+export const DASHBOARD_SERVED_EVENT_TYPES = ['ad', 'popup', 'notification', 'redirect'] as const;
 
-/** Types included in the home dashboard “Extension events” chart (ad, popup, notification, redirect). */
-export const DASHBOARD_CHART_EVENT_TYPES = [
-  ...DASHBOARD_SERVED_EVENT_TYPES,
-  'redirect',
-] as const;
+/** Extension events chart: served types plus visits. */
+export const DASHBOARD_CHART_EVENT_TYPES = [...DASHBOARD_SERVED_EVENT_TYPES, 'visit'] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

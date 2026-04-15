@@ -59,3 +59,26 @@ export function getDateRange(
 
   return { start, end, prevStart, prevEnd };
 }
+
+/**
+ * Campaign overview analytics window: from campaign start (or createdAt) through
+ * campaign end date, or “now” if end is unset or still in the future.
+ * Days are UTC boundaries; end is inclusive through end-of-day UTC.
+ */
+export function getCampaignDashboardBounds(campaign: {
+  startDate: Date | null;
+  endDate: Date | null;
+  createdAt: Date;
+}): { start: Date; end: Date } {
+  const now = new Date();
+  const rawStart = campaign.startDate ?? campaign.createdAt;
+  const start = new Date(rawStart);
+  start.setUTCHours(0, 0, 0, 0);
+
+  const end = new Date(
+    campaign.endDate && campaign.endDate.getTime() <= now.getTime() ? campaign.endDate : now
+  );
+  end.setUTCHours(23, 59, 59, 999);
+
+  return { start, end };
+}

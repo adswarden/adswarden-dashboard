@@ -41,9 +41,8 @@ interface DashboardData {
   kpis: {
     impressions: number;
     uniqueUsers: number;
-    impressionsChange: number | null;
-    usersChange: number | null;
   };
+  analyticsPeriod: { from: string; to: string };
   chartData: { date: string; impressions: number; users: number }[];
   topDomains: { domain: string; count: number }[];
   countryDistribution: { country: string | null; count: number }[];
@@ -60,7 +59,6 @@ interface CampaignDashboardProps {
 }
 
 export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps) {
-  const [range, setRange] = React.useState('7d');
   const [data, setData] = React.useState<DashboardData | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -69,7 +67,7 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`/api/campaigns/${campaign.id}/dashboard?range=${range}`)
+    fetch(`/api/campaigns/${campaign.id}/dashboard`)
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -93,7 +91,7 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
     return () => {
       cancelled = true;
     };
-  }, [campaign.id, range]);
+  }, [campaign.id]);
 
   const meta = data?.meta ?? {
     platformDomains: [],
@@ -130,16 +128,8 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
           ) : data ? (
             <>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <KpiCard
-                  label="Impressions"
-                  value={data.kpis.impressions}
-                  change={data.kpis.impressionsChange}
-                />
-                <KpiCard
-                  label="Unique Users"
-                  value={data.kpis.uniqueUsers}
-                  change={data.kpis.usersChange}
-                />
+                <KpiCard label="Impressions" value={data.kpis.impressions} />
+                <KpiCard label="Unique Users" value={data.kpis.uniqueUsers} />
                 <LinkedContentCard linkedContent={meta.linkedContent} isAdmin={isAdmin} campaignType={campaign.campaignType} />
               </div>
 
@@ -149,8 +139,7 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
                     <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-4">
                       <ActivitySection
                         chartData={data.chartData}
-                        range={range}
-                        onRangeChange={setRange}
+                        analyticsPeriod={data.analyticsPeriod}
                         loading={loading}
                         showTitle
                       />
@@ -166,7 +155,7 @@ export function CampaignDashboard({ campaign, isAdmin }: CampaignDashboardProps)
                             Top domains
                           </h2>
                           <p className="text-sm leading-relaxed text-muted-foreground">
-                            Share of impressions by site for the selected period (same range as
+                            Share of impressions by site for the campaign window (same range as
                             Activity above).
                           </p>
                         </div>

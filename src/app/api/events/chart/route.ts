@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
 import { enduserEvents } from '@/db/schema';
-import { and, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm';
+import { and, eq, gte, inArray, isNotNull, lte, or, sql } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
-import { DASHBOARD_CHART_EVENT_TYPES } from '@/lib/events-dashboard';
+import { DASHBOARD_SERVED_EVENT_TYPES } from '@/lib/events-dashboard';
 import { getStartDate, fillMissingDays } from '@/lib/date-range';
+import type { ExtensionEventChartRow } from '@/lib/extension-events-chart';
 
 export const dynamic = 'force-dynamic';
+
+export type ChartDataPoint = ExtensionEventChartRow;
 
 type RangeKey = '7d' | '30d' | '90d';
 
@@ -15,14 +18,6 @@ const RANGE_DAYS: Record<RangeKey, number> = {
   '30d': 30,
   '90d': 90,
 };
-
-export interface ChartDataPoint {
-  date: string;
-  ad: number;
-  popup: number;
-  notification: number;
-  redirect: number;
-}
 
 export async function GET(request: NextRequest) {
   try {
@@ -41,11 +36,17 @@ export async function GET(request: NextRequest) {
 
     const utcDay = sql`( ${enduserEvents.createdAt} AT TIME ZONE 'UTC' )::date`;
 
+    /** Served events must be campaign-linked; visits often have no `campaign_id` but still appear in the global event log. */
     const scopeWhere = and(
-      isNotNull(enduserEvents.campaignId),
-      inArray(enduserEvents.type, [...DASHBOARD_CHART_EVENT_TYPES]),
       gte(enduserEvents.createdAt, start),
-      lte(enduserEvents.createdAt, end)
+      lte(enduserEvents.createdAt, end),
+      or(
+        and(
+          isNotNull(enduserEvents.campaignId),
+          inArray(enduserEvents.type, [...DASHBOARD_SERVED_EVENT_TYPES])
+        ),
+        eq(enduserEvents.type, 'visit')
+      )
     );
 
     const base = db
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
         popup: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'popup' then 1 else 0 end), 0)::int`,
         notification: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'notification' then 1 else 0 end), 0)::int`,
         redirect: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'redirect' then 1 else 0 end), 0)::int`,
+        visit: sql<number>`coalesce(sum(case when ${enduserEvents.type} = 'visit' then 1 else 0 end), 0)::int`,
       })
       .from(enduserEvents);
 
@@ -62,7 +64,7 @@ export async function GET(request: NextRequest) {
 
     const dataByDate = new Map<
       string,
-      { ad: number; popup: number; notification: number; redirect: number }
+      { ad: number; popup: number; notification: number; redirect: number; visit: number }
     >();
     for (const row of rows) {
       dataByDate.set(row.dateStr, {
@@ -70,11 +72,12 @@ export async function GET(request: NextRequest) {
         popup: Number(row.popup),
         notification: Number(row.notification),
         redirect: Number(row.redirect),
+        visit: Number(row.visit),
       });
     }
 
     const chartData = fillMissingDays(start, end, (dateStr) =>
-      dataByDate.get(dateStr) ?? { ad: 0, popup: 0, notification: 0, redirect: 0 }
+      dataByDate.get(dateStr) ?? { ad: 0, popup: 0, notification: 0, redirect: 0, visit: 0 }
     ) as ChartDataPoint[];
 
     return NextResponse.json(chartData);

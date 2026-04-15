@@ -1,73 +1,64 @@
 'use client';
 
 import { ActivityChart } from './ActivityChart';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 interface ActivitySectionProps {
   chartData: { date: string; impressions: number; users: number }[];
-  range: string;
-  onRangeChange: (range: string) => void;
   loading?: boolean;
   showTitle?: boolean;
-  /** Extra classes for the Activity heading when showTitle is true */
   titleClassName?: string;
-  showRangeOnly?: boolean;
   showChartOnly?: boolean;
+  analyticsPeriod?: { from: string; to: string } | null;
 }
 
-const rangeLabels: Record<string, string> = {
-  '7d': 'Last 7 days',
-  '14d': 'Last 14 days',
-  '30d': 'Last 30 days',
-};
+function formatPeriodCaption(period: { from: string; to: string }): string {
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+  const from = new Date(`${period.from}T00:00:00.000Z`);
+  const to = new Date(`${period.to}T00:00:00.000Z`);
+  return `${from.toLocaleDateString('en-US', opts)} – ${to.toLocaleDateString('en-US', opts)}`;
+}
 
 export function ActivitySection({
   chartData,
-  range,
-  onRangeChange,
   loading = false,
   showTitle = true,
   titleClassName,
-  showRangeOnly = false,
   showChartOnly = false,
+  analyticsPeriod = null,
 }: ActivitySectionProps) {
-  const rangeSelect = (
-    <Select value={range} onValueChange={onRangeChange}>
-      <SelectTrigger size="sm" className="w-36" aria-label="Time range">
-        <SelectValue placeholder={rangeLabels[range]} />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="7d">Last 7 days</SelectItem>
-        <SelectItem value="14d">Last 14 days</SelectItem>
-        <SelectItem value="30d">Last 30 days</SelectItem>
-      </SelectContent>
-    </Select>
-  );
-
-  if (showRangeOnly) {
-    return rangeSelect;
-  }
-
   if (showChartOnly) {
     return <ActivityChart data={chartData} loading={loading} error={null} />;
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        {showTitle && (
-          <h2 className={cn('text-sm font-medium text-muted-foreground', titleClassName)}>Activity</h2>
-        )}
-        {rangeSelect}
+    <section
+      className="flex min-h-0 flex-1 flex-col gap-3"
+      aria-labelledby={showTitle ? 'campaign-activity-heading' : undefined}
+      aria-label={showTitle ? undefined : 'Campaign activity'}
+    >
+      <div className="flex shrink-0 flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex flex-col gap-0.5">
+          {showTitle && (
+            <h2
+              id="campaign-activity-heading"
+              className={cn('text-sm font-medium text-muted-foreground', titleClassName)}
+            >
+              Activity
+            </h2>
+          )}
+          <p className="text-xs text-muted-foreground/50">
+            Events &amp; unique users per day
+          </p>
+        </div>
+        {analyticsPeriod ? (
+          <p className="text-xs tabular-nums text-muted-foreground/70 sm:text-right">
+            {formatPeriodCaption(analyticsPeriod)}
+          </p>
+        ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col">
+
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <ActivityChart data={chartData} loading={loading} error={null} fillHeight />
       </div>
     </section>
