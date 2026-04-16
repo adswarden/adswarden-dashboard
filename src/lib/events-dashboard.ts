@@ -288,7 +288,10 @@ export async function listEventsPageWithCount(
     .offset(opts.offset);
 
   const totalCount = rawRows[0]?.totalCount ?? 0;
-  const rows = rawRows.map(({ totalCount: _tc, ...row }) => row) as EventLogRow[];
+  const rows = rawRows.map(({ totalCount, ...row }) => {
+    void totalCount;
+    return row;
+  }) as EventLogRow[];
   return { rows, totalCount };
 }
 

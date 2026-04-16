@@ -945,17 +945,14 @@ function ManageTabContent({
 
   const paymentTotal = payments.length
   const paymentTotalPages = Math.max(1, Math.ceil(paymentTotal / MANAGE_PAYMENTS_PAGE_SIZE))
+  const clampedPayPage = Math.min(payPage, paymentTotalPages)
 
   const paymentsExportParams = useMemo(() => ({ endUserId: userId }), [userId])
 
   const paymentsPageRows = useMemo(() => {
-    const start = (payPage - 1) * MANAGE_PAYMENTS_PAGE_SIZE
+    const start = (clampedPayPage - 1) * MANAGE_PAYMENTS_PAGE_SIZE
     return payments.slice(start, start + MANAGE_PAYMENTS_PAGE_SIZE)
-  }, [payments, payPage])
-
-  useEffect(() => {
-    setPayPage((p) => Math.min(p, paymentTotalPages))
-  }, [paymentTotalPages])
+  }, [payments, clampedPayPage])
 
   useEffect(() => {
     let cancelled = false
@@ -974,7 +971,7 @@ function ManageTabContent({
     paymentTotal > 0 ? (
       <TablePagination
         mode="button"
-        page={payPage}
+        page={clampedPayPage}
         totalPages={paymentTotalPages}
         totalCount={paymentTotal}
         pageSize={MANAGE_PAYMENTS_PAGE_SIZE}
