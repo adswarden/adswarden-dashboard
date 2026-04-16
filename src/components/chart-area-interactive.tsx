@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Area, AreaChart, CartesianGrid, XAxis } from "recharts"
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts"
 
 import {
   Card,
@@ -10,12 +10,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { ExtensionEventsChartTooltip } from "@/components/extension-events-chart-tooltip"
 import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-  type ChartConfig,
-} from "@/components/ui/chart"
+  extensionEventChartAllZeros,
+  extensionEventsChartConfig,
+  type ExtensionEventChartRow,
+} from "@/lib/extension-events-chart"
 import {
   Select,
   SelectContent,
@@ -31,48 +32,36 @@ import {
 } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 
-interface ChartDataPoint {
-  date: string
-  ad: number
-  popup: number
-  notification: number
-  redirect: number
+function formatYAxisTick(value: number): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return "0"
+  const abs = Math.abs(n)
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (abs >= 10_000) return `${Math.round(n / 1_000)}k`
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(Math.round(n))
 }
 
-/** Stacked bottom → top: notification, ad, popup, redirect — theme chart-5…2 ramp (violet, matches primary). */
-const chartConfig = {
-  notification: {
-    label: "Notification",
-    color: "var(--chart-5)",
-  },
-  ad: {
-    label: "Ad",
-    color: "var(--chart-4)",
-  },
-  popup: {
-    label: "Popup",
-    color: "var(--chart-3)",
-  },
-  redirect: {
-    label: "Redirect",
-    color: "var(--chart-2)",
-  },
-} satisfies ChartConfig
+/** Even integer ticks that hug the data closely (~3% headroom, 4-5 ticks). */
+function niceYAxisTicks(stackMax: number): number[] {
+  if (!Number.isFinite(stackMax) || stackMax <= 0) return [0]
+  const ceil = Math.ceil(stackMax * 1.03)
+  const candidates = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000]
+  let step = 1
+  for (const c of candidates) {
+    if (Math.ceil(ceil / c) <= 5) { step = c; break }
+  }
+  if (step === 1 && ceil > 50000) step = Math.ceil(ceil / 5 / 1000) * 1000
+  const top = Math.ceil(ceil / step) * step
+  const ticks: number[] = []
+  for (let v = 0; v <= top; v += step) ticks.push(v)
+  return ticks
+}
 
 const rangeLabels: Record<string, string> = {
   "90d": "Last 3 months",
   "30d": "Last 30 days",
   "7d": "Last 7 days",
-}
-
-function isAllZeroChartData(data: ChartDataPoint[]) {
-  return data.every(
-    (d) =>
-      d.ad === 0 &&
-      d.popup === 0 &&
-      d.notification === 0 &&
-      d.redirect === 0
-  )
 }
 
 export interface ChartAreaInteractiveProps {
@@ -82,7 +71,8 @@ export interface ChartAreaInteractiveProps {
 export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
   const [mounted, setMounted] = React.useState(false)
   const [timeRange, setTimeRange] = React.useState("7d")
-  const [chartData, setChartData] = React.useState<ChartDataPoint[]>([])
+
+  const [chartData, setChartData] = React.useState<ExtensionEventChartRow[]>([])
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [retryKey, setRetryKey] = React.useState(0)
@@ -98,7 +88,7 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
         if (!res.ok) throw new Error("Failed to fetch chart data")
         return res.json()
       })
-      .then((data: ChartDataPoint[]) => {
+      .then((data: ExtensionEventChartRow[]) => {
         if (!cancelled) {
           setChartData(data)
         }
@@ -121,10 +111,27 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
 
   const descriptionText = rangeLabels[timeRange] ?? "Last 7 days"
 
+  const singleSeriesMax = React.useMemo(() => {
+    if (!chartData.length) return 0
+    let max = 0
+    for (const row of chartData) {
+      for (const v of [row.visit, row.popup, row.notification, row.ad, row.redirect]) {
+        if (v > max) max = v
+      }
+    }
+    return max
+  }, [chartData])
+
+  const yAxisTicks = React.useMemo(
+    () => niceYAxisTicks(singleSeriesMax),
+    [singleSeriesMax]
+  )
+  const yAxisTop = yAxisTicks[yAxisTicks.length - 1] ?? 100
+
   return (
     <Card
       className={cn(
-        "@container/card relative z-0 border-border bg-card/40 py-4 shadow-none overflow-hidden",
+        "@container/card relative z-0 border-border bg-card/40 py-4 shadow-none",
         className
       )}
     >
@@ -133,10 +140,9 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
           <CardTitle className="text-sm font-medium">Extension events</CardTitle>
           <CardDescription className="text-xs leading-relaxed">
             <span className="hidden @[540px]/card:block">
-              Campaign-linked events by type: ad, popup, notification, and redirect —{" "}
-              {descriptionText.toLowerCase()}
+              {descriptionText}. Hover for daily totals. Visits have no campaign; other types do.
             </span>
-            <span className="@[540px]/card:hidden">{descriptionText}</span>
+            <span className="@[540px]/card:hidden">{descriptionText} — hover for detail</span>
           </CardDescription>
         </div>
         <div className="flex items-center justify-start sm:justify-end">
@@ -183,10 +189,10 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
       </CardHeader>
       <CardContent className="pt-0 px-2 sm:px-6">
         {loading ? (
-          <Skeleton className="h-[264px] w-full rounded-lg" />
+          <Skeleton className="h-[320px] w-full rounded-lg" />
         ) : error ? (
           <div
-            className="flex h-[264px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-4 text-center"
+            className="flex h-[320px] flex-col items-center justify-center gap-3 rounded-lg border border-dashed px-4 text-center"
             role="alert"
           >
             <p className="text-sm text-muted-foreground">{error}</p>
@@ -201,81 +207,57 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
           </div>
         ) : chartData.length === 0 ? (
           <div
-            className="flex h-[264px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
+            className="flex h-[320px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
             role="status"
           >
             No event data for this period
           </div>
-        ) : isAllZeroChartData(chartData) ? (
+        ) : extensionEventChartAllZeros(chartData) ? (
           <div
-            className="flex h-[264px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
+            className="flex h-[320px] items-center justify-center rounded-lg border border-dashed text-sm text-muted-foreground"
             role="status"
           >
             No event data for this period
           </div>
         ) : (
           <ChartContainer
-            config={chartConfig}
-            className="aspect-auto h-[264px] w-full"
+            config={extensionEventsChartConfig}
+            className="aspect-auto h-[320px] w-full min-h-[280px]"
           >
-            <AreaChart data={chartData}>
+            <AreaChart
+              accessibilityLayer
+              data={chartData}
+              margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+            >
               <defs>
                 <linearGradient id="fillAd" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-ad)"
-                    stopOpacity={1.0}
-                  />
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-ad)"
-                    stopOpacity={0.1}
-                  />
+                  <stop offset="5%" stopColor="var(--color-ad)" stopOpacity={0.85} />
+                  <stop offset="95%" stopColor="var(--color-ad)" stopOpacity={0.08} />
                 </linearGradient>
                 <linearGradient id="fillPopup" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-popup)"
-                    stopOpacity={0.9}
-                  />
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-popup)"
-                    stopOpacity={0.1}
-                  />
+                  <stop offset="5%" stopColor="var(--color-popup)" stopOpacity={0.85} />
+                  <stop offset="95%" stopColor="var(--color-popup)" stopOpacity={0.08} />
                 </linearGradient>
                 <linearGradient id="fillNotification" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-notification)"
-                    stopOpacity={0.8}
-                  />
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-notification)"
-                    stopOpacity={0.1}
-                  />
+                  <stop offset="5%" stopColor="var(--color-notification)" stopOpacity={0.85} />
+                  <stop offset="95%" stopColor="var(--color-notification)" stopOpacity={0.08} />
                 </linearGradient>
                 <linearGradient id="fillRedirect" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="5%"
-                    stopColor="var(--color-redirect)"
-                    stopOpacity={0.85}
-                  />
-                  <stop
-                    offset="95%"
-                    stopColor="var(--color-redirect)"
-                    stopOpacity={0.1}
-                  />
+                  <stop offset="5%" stopColor="var(--color-redirect)" stopOpacity={0.85} />
+                  <stop offset="95%" stopColor="var(--color-redirect)" stopOpacity={0.08} />
+                </linearGradient>
+                <linearGradient id="fillVisit" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--color-visit)" stopOpacity={0.8} />
+                  <stop offset="95%" stopColor="var(--color-visit)" stopOpacity={0.08} />
                 </linearGradient>
               </defs>
-              <CartesianGrid vertical={false} />
+              <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-border/60" />
               <XAxis
                 dataKey="date"
                 tickLine={false}
                 axisLine={false}
-                tickMargin={8}
-                minTickGap={32}
+                tickMargin={10}
+                minTickGap={28}
                 tickFormatter={(value) => {
                   const date = new Date(value)
                   return date.toLocaleDateString("en-US", {
@@ -284,47 +266,59 @@ export function ChartAreaInteractive({ className }: ChartAreaInteractiveProps) {
                   })
                 }}
               />
+              <YAxis
+                width={48}
+                allowDecimals={false}
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tickFormatter={formatYAxisTick}
+                domain={[0, yAxisTop]}
+                ticks={yAxisTicks}
+              />
               <ChartTooltip
-                cursor={false}
-                content={
-                  <ChartTooltipContent
-                    labelFormatter={(value) => {
-                      return new Date(value).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })
-                    }}
-                    indicator="dot"
-                  />
-                }
+                cursor={{ stroke: "var(--border)", strokeWidth: 1, strokeDasharray: "4 4" }}
+                content={<ExtensionEventsChartTooltip />}
               />
               <Area
-                dataKey="notification"
-                type="natural"
-                fill="url(#fillNotification)"
-                stroke="var(--color-notification)"
-                stackId="a"
-              />
-              <Area
-                dataKey="ad"
-                type="natural"
-                fill="url(#fillAd)"
-                stroke="var(--color-ad)"
-                stackId="a"
+                dataKey="visit"
+                type="monotone"
+                strokeWidth={1.5}
+                fill="url(#fillVisit)"
+                fillOpacity={0.35}
+                stroke="var(--color-visit)"
               />
               <Area
                 dataKey="popup"
-                type="natural"
+                type="monotone"
+                strokeWidth={1.5}
                 fill="url(#fillPopup)"
+                fillOpacity={0.35}
                 stroke="var(--color-popup)"
-                stackId="a"
+              />
+              <Area
+                dataKey="notification"
+                type="monotone"
+                strokeWidth={1.5}
+                fill="url(#fillNotification)"
+                fillOpacity={0.35}
+                stroke="var(--color-notification)"
+              />
+              <Area
+                dataKey="ad"
+                type="monotone"
+                strokeWidth={1.5}
+                fill="url(#fillAd)"
+                fillOpacity={0.35}
+                stroke="var(--color-ad)"
               />
               <Area
                 dataKey="redirect"
-                type="natural"
+                type="monotone"
+                strokeWidth={1.5}
                 fill="url(#fillRedirect)"
+                fillOpacity={0.35}
                 stroke="var(--color-redirect)"
-                stackId="a"
               />
             </AreaChart>
           </ChartContainer>

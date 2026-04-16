@@ -4,6 +4,7 @@ import { platforms } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
 import { normalizeDomain } from '@/lib/domain-utils';
+import { queryRedirectConflictForPlatform } from '@/lib/redirect-platform-conflict-queries';
 import { publishPlatformsUpdated } from '@/lib/redis';
 
 // GET all platforms
@@ -45,6 +46,16 @@ export async function POST(request: NextRequest) {
 
     // Normalize domain (extract hostname from URL if needed)
     const normalizedDomain = normalizeDomain(domain);
+
+    const redirectHit = await queryRedirectConflictForPlatform(normalizedDomain);
+    if (redirectHit !== undefined) {
+      return NextResponse.json(
+        {
+          error: `This domain is already covered by a redirect rule (source: ${redirectHit.sourceDomain}). Change or remove the redirect first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     // Check if name or domain already exists
     const [existingByName, existingByDomain] = await Promise.all([

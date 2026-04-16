@@ -208,6 +208,17 @@ export function RedirectsTableWithDrawer({
                             name={r.name}
                             entityType="redirect"
                             apiPath={`/api/redirects/${r.id}`}
+                            disabled={r.linkedCampaignCount > 0}
+                            disabledReason={
+                              r.linkedCampaignCount > 0
+                                ? `Used by ${r.linkedCampaignCount} campaign(s). Unlink or remove those campaigns first.`
+                                : undefined
+                            }
+                            linkedHelp={
+                              r.linkedCampaignCount > 0
+                                ? { type: 'redirect', entityId: r.id }
+                                : undefined
+                            }
                           />
                         </div>
                       </TableCell>

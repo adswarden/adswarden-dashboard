@@ -114,7 +114,8 @@ export function NavUser({
                 <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {user.email}
+                    {/* Defer email until mount so SSR + hydration match (extensions / DOM quirks around @). */}
+                    {mounted ? user.email : '\u00A0'}
                   </span>
                 </div>
               </div>
@@ -145,7 +146,7 @@ export function NavUser({
                 <div className="grid min-w-0 flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">{user.name}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {user.email}
+                    {mounted ? user.email : '\u00A0'}
                   </span>
                 </div>
               </Link>

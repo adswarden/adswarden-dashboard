@@ -43,8 +43,10 @@ export async function GET(request: NextRequest) {
       totalEver: summary.totalEverCents,
       paidUsersCount: summary.paidUsersCount,
       completedPaymentsThisMonth: summary.completedPaymentsThisMonthCount,
+      completedPaymentsPriorMonth: summary.completedPaymentsPriorMonthCount,
       completedPaymentsAllTime: summary.completedPaymentsAllTimeCount,
       distinctPayersThisMonth: summary.distinctPayersThisMonthCount,
+      distinctPayersPriorMonth: summary.distinctPayersPriorMonthCount,
     },
   });
 }

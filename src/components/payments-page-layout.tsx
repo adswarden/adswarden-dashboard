@@ -13,27 +13,25 @@ export function PaymentsPageLayout({ filterContent, children }: PaymentsPageLayo
   const [showFilters, setShowFilters] = useState(false);
 
   return (
-    <div className="flex flex-col gap-6 p-4 md:p-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold">Payments</h1>
-          <p className="mt-1 text-sm text-muted-foreground leading-snug">
-            Paid extension users — payment totals, counts, and history.
-          </p>
+    <div className="flex flex-col gap-5 p-4 md:p-6">
+      <header className="flex flex-col gap-2">
+        <div className="flex flex-row items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight min-w-0">Payments</h1>
+          <Button
+            type="button"
+            variant={showFilters ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() => setShowFilters(!showFilters)}
+            className="shrink-0 motion-reduce:transition-none"
+            aria-expanded={showFilters}
+            aria-controls="payments-filters-panel"
+          >
+            <IconFilter className="h-4 w-4 mr-2" aria-hidden="true" />
+            {showFilters ? 'Hide filters' : 'Filters'}
+          </Button>
         </div>
-        <Button
-          type="button"
-          variant={showFilters ? 'secondary' : 'outline'}
-          size="sm"
-          onClick={() => setShowFilters(!showFilters)}
-          className="shrink-0 motion-reduce:transition-none"
-          aria-expanded={showFilters}
-          aria-controls="payments-filters-panel"
-        >
-          <IconFilter className="h-4 w-4 mr-2" aria-hidden />
-          {showFilters ? 'Hide filters' : 'Filters'}
-        </Button>
-      </div>
+        <p className="text-sm text-muted-foreground leading-snug">Revenue and payment history.</p>
+      </header>
 
       <div
         id="payments-filters-panel"

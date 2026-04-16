@@ -2,13 +2,13 @@ import { getSessionWithRole } from '@/lib/dal';
 import { redirect } from 'next/navigation';
 import { IconCreditCard } from '@tabler/icons-react';
 import { AllPaymentsTable } from '@/components/all-payments-table';
+import { DateDisplayToggleButton } from '@/components/date-display-toggle-button';
 import { ExportPaymentsCsvButton } from '@/components/export-payments-csv-button';
 import { PaymentsFilters } from '@/components/payments-filters';
 import { PaymentsPageLayout } from '@/components/payments-page-layout';
 import { RefreshDataButton } from '@/components/refresh-data-button';
+import { KpiCard } from '@/components/dashboard/KpiCard';
 import { TablePagination } from '@/components/ui/table-pagination';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   countPaymentsListQuery,
   getPaymentsSummary,
@@ -31,26 +31,10 @@ function formatUsdFromCents(cents: number): string {
   }).format(cents / 100);
 }
 
-/** Plain-language month-over-month revenue vs prior calendar month (USD sums). */
-function formatRevenueMomLine(currentCents: number, priorCents: number): string {
-  const diff = currentCents - priorCents;
-  if (priorCents === 0 && currentCents === 0) {
-    return 'Same as prior month ($0).';
-  }
-  if (priorCents === 0 && currentCents > 0) {
-    return `Up from $0 prior month (${formatUsdFromCents(currentCents)} total).`;
-  }
-  if (diff === 0) {
-    return `Flat vs prior month (${formatUsdFromCents(priorCents)}).`;
-  }
-  const abs = formatUsdFromCents(Math.abs(diff));
-  const pct =
-    priorCents > 0 ? Math.round((diff / priorCents) * 1000) / 10 : null;
-  const pctPart = pct != null ? ` (${diff > 0 ? '+' : ''}${pct}%)` : '';
-  if (diff > 0) {
-    return `Up ${abs} vs prior month${pctPart}.`;
-  }
-  return `Down ${abs} vs prior month${pctPart}.`;
+/** Month-over-month %; null when prior baseline is zero (no meaningful ratio). */
+function percentChangeVsPriorMonth(current: number, prior: number): number | null {
+  if (prior <= 0) return null;
+  return Math.round(((current - prior) / prior) * 100);
 }
 
 type SearchParams = Promise<{
@@ -92,79 +76,49 @@ export default async function PaymentsPage({
     <PaymentsPageLayout
       filterContent={<PaymentsFilters q={filters.q} status={filters.status} />}
     >
-      <section aria-labelledby="payments-summary-heading" className="space-y-4">
+      <section aria-labelledby="payments-summary-heading" className="space-y-3">
         <h2 id="payments-summary-heading" className="sr-only">
           Revenue summary
         </h2>
-        <div className="grid grid-cols-1 gap-4 @xl/main:grid-cols-3">
-          <Card className="min-w-0 gap-0 py-0 shadow-sm">
-            <CardHeader className="flex flex-col gap-2 px-4 py-3">
-              <div className="flex items-center justify-between gap-3 min-w-0">
-                <CardDescription className="min-w-0 leading-snug">Revenue this month</CardDescription>
-                <Badge variant="outline" className="text-xs font-normal px-2 py-0 shrink-0">
-                  Completed
-                </Badge>
-              </div>
-              <CardTitle className="text-xl font-semibold tabular-nums leading-none">
-                {formatUsdFromCents(summary.totalThisMonthCents)}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground leading-snug space-y-1">
-                <span className="block">
-                  {summary.completedPaymentsThisMonthCount.toLocaleString()} completed payments ·
-                  calendar month (server time).
-                </span>
-                <span className="block">
-                  {formatRevenueMomLine(summary.totalThisMonthCents, summary.totalPriorMonthCents)}
-                </span>
-              </p>
-            </CardHeader>
-          </Card>
-          <Card className="min-w-0 gap-0 py-0 shadow-sm">
-            <CardHeader className="flex flex-col gap-2 px-4 py-3">
-              <div className="flex items-center justify-between gap-3 min-w-0">
-                <CardDescription className="min-w-0 leading-snug">Total revenue</CardDescription>
-                <Badge variant="outline" className="text-xs font-normal px-2 py-0 shrink-0">
-                  Completed
-                </Badge>
-              </div>
-              <CardTitle className="text-xl font-semibold tabular-nums leading-none">
-                {formatUsdFromCents(summary.totalEverCents)}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground leading-snug">
-                {summary.completedPaymentsAllTimeCount.toLocaleString()} completed payments · all-time
-                sum (USD).
-              </p>
-            </CardHeader>
-          </Card>
-          <Card className="min-w-0 gap-0 py-0 shadow-sm">
-            <CardHeader className="flex flex-col gap-2 px-4 py-3">
-              <div className="flex items-center justify-between gap-3 min-w-0">
-                <CardDescription className="min-w-0 leading-snug">Paid users</CardDescription>
-                <Badge variant="outline" className="text-xs font-normal px-2 py-0 shrink-0">
-                  Extension
-                </Badge>
-              </div>
-              <CardTitle className="text-xl font-semibold tabular-nums leading-none">
-                {summary.paidUsersCount.toLocaleString()}
-              </CardTitle>
-              <p className="text-xs text-muted-foreground leading-snug">
-                On paid plan ·{' '}
-                {summary.distinctPayersThisMonthCount.toLocaleString()} with a completed payment this
-                month.
-              </p>
-            </CardHeader>
-          </Card>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <KpiCard
+            label="This month"
+            value={formatUsdFromCents(summary.totalThisMonthCents)}
+            change={percentChangeVsPriorMonth(
+              summary.totalThisMonthCents,
+              summary.totalPriorMonthCents
+            )}
+            changeHint="Completed revenue vs. prior calendar month"
+          />
+          <KpiCard
+            label="All-time"
+            value={formatUsdFromCents(summary.totalEverCents)}
+            change={percentChangeVsPriorMonth(
+              summary.completedPaymentsThisMonthCount,
+              summary.completedPaymentsPriorMonthCount
+            )}
+            changeHint="Completed payment count vs. prior month"
+          />
+          <KpiCard
+            label="Paid users"
+            value={summary.paidUsersCount}
+            change={percentChangeVsPriorMonth(
+              summary.distinctPayersThisMonthCount,
+              summary.distinctPayersPriorMonthCount
+            )}
+            changeHint="Distinct payers this month vs. prior month"
+          />
         </div>
       </section>
 
       <section aria-labelledby="payments-table-heading" className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="min-w-0">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div className="min-w-0 flex items-center min-h-8">
             <h2
               id="payments-table-heading"
-              className="text-base font-semibold flex items-center gap-2"
+              className="text-base font-semibold flex items-center gap-2 leading-none"
             >
-              <IconCreditCard className="h-5 w-5 shrink-0" aria-hidden />
+              <IconCreditCard className="h-5 w-5 shrink-0" aria-hidden="true" />
               <span className="truncate">Payments ({totalCount.toLocaleString()})</span>
             </h2>
           </div>
@@ -181,6 +135,7 @@ export default async function PaymentsPage({
               />
             )}
             <ExportPaymentsCsvButton filterParams={filterParams} />
+            <DateDisplayToggleButton />
             <RefreshDataButton
               ariaLabel="Refresh payments"
               tooltip="Reload payments with current filters"

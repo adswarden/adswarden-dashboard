@@ -2,9 +2,23 @@ import 'server-only';
 
 import { database as db } from '@/db';
 import { endUsers, payments } from '@/db/schema';
-import { and, desc, eq, gte, ilike, lt, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  count,
+  countDistinct,
+  desc,
+  eq,
+  gte,
+  ilike,
+  lt,
+  or,
+  sql,
+  sum,
+  type SQL,
+} from 'drizzle-orm';
 import type { PaymentListRow, PaymentStatusFilter, PaymentsDashboardFilters } from '@/lib/payments-types';
 import { getQueryParam } from '@/lib/url-search-params';
+import { isValidEndUserUuid } from '@/lib/end-user-id';
 import { escapeCsvCell, escapeIlikePattern } from '@/lib/utils';
 
 export type { PaymentListRow, PaymentStatusFilter, PaymentsDashboardFilters } from '@/lib/payments-types';
@@ -14,18 +28,25 @@ export function parsePaymentsDashboardFilters(
 ): PaymentsDashboardFilters {
   const q = getQueryParam(sp, 'q');
   const statusRaw = getQueryParam(sp, 'status')?.toLowerCase();
-  const status =
+   const status =
     statusRaw === 'pending' ||
     statusRaw === 'completed' ||
     statusRaw === 'failed' ||
     statusRaw === 'refunded'
       ? (statusRaw as PaymentStatusFilter)
       : undefined;
-  return { q, status };
+  const endUserIdRaw = getQueryParam(sp, 'endUserId')?.trim();
+  const endUserId =
+    endUserIdRaw && isValidEndUserUuid(endUserIdRaw) ? endUserIdRaw : undefined;
+  return { q, status, endUserId };
 }
 
 function buildPaymentsFilterConditions(filters: PaymentsDashboardFilters): SQL[] {
   const conditions: SQL[] = [];
+
+  if (filters.endUserId) {
+    conditions.push(eq(payments.endUserId, filters.endUserId));
+  }
 
   if (filters.status) {
     conditions.push(eq(payments.status, filters.status));
@@ -103,7 +124,11 @@ function startOfPriorMonth(): Date {
   return new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
 }
 
-const completed = eq(payments.status, 'completed');
+function numericFromDb(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'bigint') return Number(v);
+  return Number(v);
+}
 
 export type PaymentsSummary = {
   totalThisMonthCents: number;
@@ -111,63 +136,65 @@ export type PaymentsSummary = {
   totalEverCents: number;
   paidUsersCount: number;
   completedPaymentsThisMonthCount: number;
+  completedPaymentsPriorMonthCount: number;
   completedPaymentsAllTimeCount: number;
   distinctPayersThisMonthCount: number;
+  distinctPayersPriorMonthCount: number;
 };
 
 export async function getPaymentsSummary(): Promise<PaymentsSummary> {
   const monthStart = startOfCurrentMonth();
   const priorMonthStart = startOfPriorMonth();
 
-  const [
-    [monthAgg],
-    [priorAgg],
-    [everAgg],
-    [paidRow],
-    [payersThisMonthRow],
-  ] = await Promise.all([
+  // Four scoped selects on `payments` + one on `end_users` (Promise.all). A single mega-aggregate
+  // with FILTER/CASE fails at runtime with postgres.js + Drizzle in this project (prepared/binding).
+  // Each query is a simple indexed aggregate; total cost is still modest for dashboard traffic.
+  const [[monthAgg], [priorAgg], [everAgg], [paidRow]] = await Promise.all([
     db
       .select({
-        sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
-        count: sql<number>`count(*)::int`,
+        monthSum: sum(payments.amount),
+        monthCount: count(),
+        monthDistinctPayers: countDistinct(payments.endUserId),
       })
       .from(payments)
-      .where(and(completed, gte(payments.paymentDate, monthStart))),
+      .where(and(eq(payments.status, 'completed'), gte(payments.paymentDate, monthStart))),
     db
       .select({
-        sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
+        priorSum: sum(payments.amount),
+        priorCount: count(),
+        priorDistinctPayers: countDistinct(payments.endUserId),
       })
       .from(payments)
       .where(
-        and(completed, gte(payments.paymentDate, priorMonthStart), lt(payments.paymentDate, monthStart))
+        and(
+          eq(payments.status, 'completed'),
+          gte(payments.paymentDate, priorMonthStart),
+          lt(payments.paymentDate, monthStart)
+        )
       ),
     db
       .select({
-        sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
-        count: sql<number>`count(*)::int`,
+        everSum: sum(payments.amount),
+        everCount: count(),
       })
       .from(payments)
-      .where(completed),
+      .where(eq(payments.status, 'completed')),
     db
       .select({ count: sql<number>`count(*)::int` })
       .from(endUsers)
       .where(eq(endUsers.plan, 'paid')),
-    db
-      .select({
-        count: sql<number>`count(distinct ${payments.endUserId})::int`,
-      })
-      .from(payments)
-      .where(and(completed, gte(payments.paymentDate, monthStart))),
   ]);
 
   return {
-    totalThisMonthCents: monthAgg?.sum ?? 0,
-    totalPriorMonthCents: priorAgg?.sum ?? 0,
-    totalEverCents: everAgg?.sum ?? 0,
+    totalThisMonthCents: numericFromDb(monthAgg?.monthSum),
+    totalPriorMonthCents: numericFromDb(priorAgg?.priorSum),
+    totalEverCents: numericFromDb(everAgg?.everSum),
     paidUsersCount: paidRow?.count ?? 0,
-    completedPaymentsThisMonthCount: monthAgg?.count ?? 0,
-    completedPaymentsAllTimeCount: everAgg?.count ?? 0,
-    distinctPayersThisMonthCount: payersThisMonthRow?.count ?? 0,
+    completedPaymentsThisMonthCount: Number(monthAgg?.monthCount ?? 0),
+    completedPaymentsPriorMonthCount: Number(priorAgg?.priorCount ?? 0),
+    completedPaymentsAllTimeCount: Number(everAgg?.everCount ?? 0),
+    distinctPayersThisMonthCount: Number(monthAgg?.monthDistinctPayers ?? 0),
+    distinctPayersPriorMonthCount: Number(priorAgg?.priorDistinctPayers ?? 0),
   };
 }
 

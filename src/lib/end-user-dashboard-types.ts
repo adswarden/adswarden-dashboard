@@ -22,4 +22,9 @@ export type EndUserDashboardSnapshot = {
     campaignName: string;
     eventCount: number;
   }>;
+  /** ISO2 codes from extension events for this user, most events first. */
+  eventCountries: Array<{
+    code: string;
+    eventCount: number;
+  }>;
 };

@@ -18,10 +18,9 @@ import {
 import { TablePagination } from '@/components/ui/table-pagination';
 import { getSessionWithRole } from '@/lib/dal';
 import {
-  countEvents,
   eventsFilterChips,
   eventsFilterParamsRecord,
-  listEventsPage,
+  listEventsPageWithCount,
   parseEventsDashboardFilters,
 } from '@/lib/events-dashboard';
 import { getCountryName } from '@/lib/countries';
@@ -63,10 +62,13 @@ export default async function EventsPage({ searchParams }: { searchParams: Searc
   const filterRecord = eventsFilterParamsRecord(filters);
   const filterChips = eventsFilterChips(filters);
 
-  const [totalCount, pageRows] = await Promise.all([
-    countEvents(session.role, session.user.id, filters),
-    listEventsPage(session.role, session.user.id, filters, { limit: PAGE_SIZE, offset }),
-  ]);
+  // Single query returns both rows and total count via count(*) OVER()
+  const { rows: pageRows, totalCount } = await listEventsPageWithCount(
+    session.role,
+    session.user.id,
+    filters,
+    { limit: PAGE_SIZE, offset }
+  );
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
   const paginationEl =

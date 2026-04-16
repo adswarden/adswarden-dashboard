@@ -3,7 +3,7 @@ import 'server-only';
 import { database as db } from '@/db';
 import { campaigns, endUsers, enduserEvents, enduserSessions, payments } from '@/db/schema';
 import type { EndUserDashboardSnapshot } from '@/lib/end-user-dashboard-types';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, ne, sql } from 'drizzle-orm';
 
 export type { EndUserDashboardSnapshot } from '@/lib/end-user-dashboard-types';
 
@@ -22,27 +22,21 @@ export async function getEndUserDashboardSnapshot(
 
   const [
     paymentRow,
-    paymentCurrencyRow,
     sessionRow,
     eventRow,
     campaignRows,
+    countryRows,
   ] = await Promise.all([
+    // Aggregate + latest currency in one query using a window function.
     db
       .select({
         completedCount: sql<number>`count(*)::int`,
         completedSumAmount: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
         lastPaymentAt: sql<Date | null>`max(${payments.paymentDate})`,
+        currency: sql<string>`(array_agg(${payments.currency} order by ${payments.paymentDate} desc))[1]`,
       })
       .from(payments)
       .where(and(eq(payments.endUserId, endUserUuidString), eq(payments.status, 'completed')))
-      .then((rows) => rows[0]),
-
-    db
-      .select({ currency: payments.currency })
-      .from(payments)
-      .where(and(eq(payments.endUserId, endUserUuidString), eq(payments.status, 'completed')))
-      .orderBy(desc(payments.paymentDate))
-      .limit(1)
       .then((rows) => rows[0]),
 
     db
@@ -78,6 +72,22 @@ export async function getEndUserDashboardSnapshot(
       .groupBy(enduserEvents.campaignId, campaigns.name)
       .orderBy(desc(sql`count(*)`))
       .limit(20),
+
+    db
+      .select({
+        country: enduserEvents.country,
+        eventCount: sql<number>`count(*)::int`,
+      })
+      .from(enduserEvents)
+      .where(
+        and(
+          userIdent ? eq(enduserEvents.userIdentifier, userIdent) : sql`1 = 0`,
+          isNotNull(enduserEvents.country),
+          ne(enduserEvents.country, ''),
+        ),
+      )
+      .groupBy(enduserEvents.country)
+      .orderBy(desc(sql`count(*)`)),
   ]);
 
   const campaignsList = (campaignRows ?? [])
@@ -88,11 +98,18 @@ export async function getEndUserDashboardSnapshot(
       eventCount: Number(r.eventCount),
     }));
 
+  const eventCountries = (countryRows ?? [])
+    .filter((r): r is typeof r & { country: string } => Boolean(r.country?.trim()))
+    .map((r) => ({
+      code: r.country.trim().toUpperCase(),
+      eventCount: Number(r.eventCount),
+    }));
+
   return {
     payments: {
       completedCount: Number(paymentRow?.completedCount ?? 0),
       completedSumAmount: Number(paymentRow?.completedSumAmount ?? 0),
-      currency: paymentCurrencyRow?.currency ?? 'USD',
+      currency: paymentRow?.currency ?? 'USD',
       lastPaymentAt: paymentRow?.lastPaymentAt
         ? (paymentRow.lastPaymentAt instanceof Date
             ? paymentRow.lastPaymentAt
@@ -116,5 +133,6 @@ export async function getEndUserDashboardSnapshot(
       distinctCampaignsWithEvents: Number(eventRow?.distinctCampaignsWithEvents ?? 0),
     },
     campaigns: campaignsList,
+    eventCountries,
   };
 }

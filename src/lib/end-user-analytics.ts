@@ -227,11 +227,23 @@ export async function getEndUserAnalyticsBundle(
     };
   }
 
-  const [summary, series, topDomains] = await Promise.all([
-    getEndUserEventSummary(role, dashboardUserId, userIdentifier, start, end),
+  // Run series and topDomains in parallel. Summary totals are derived from the series
+  // rows in JS — avoids a third full table scan over the same user+window data.
+  const [series, topDomains] = await Promise.all([
     getEndUserDailySeries(role, dashboardUserId, userIdentifier, start, end),
     getEndUserTopDomains(role, dashboardUserId, userIdentifier, start, end, 10),
   ]);
+
+  const summary: EndUserEventSummary = { total: 0, visit: 0, ad: 0, popup: 0, notification: 0, redirect: 0, served: 0 };
+  for (const row of series) {
+    summary.visit += row.visit;
+    summary.ad += row.ad;
+    summary.popup += row.popup;
+    summary.notification += row.notification;
+    summary.redirect += row.redirect;
+  }
+  summary.served = summary.ad + summary.popup + summary.notification + summary.redirect;
+  summary.total = summary.visit + summary.served;
 
   return {
     range,

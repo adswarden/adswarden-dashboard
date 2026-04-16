@@ -1,14 +1,15 @@
 import 'server-only';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { serverConfig } from '@/lib/config/server';
 import { normalizeDatabaseUrl, postgresJsPrepareOption } from '@/lib/db/connection-url';
 import * as schema from './schema';
 
 let client: postgres.Sql | null = null;
-let db: ReturnType<typeof drizzle> | null = null;
+let db: PostgresJsDatabase<typeof schema> | null = null;
 
-function getDatabase() {
+function getDatabase(): PostgresJsDatabase<typeof schema> {
   if (db) {
     return db;
   }

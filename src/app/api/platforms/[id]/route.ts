@@ -4,6 +4,8 @@ import { platforms } from '@/db/schema';
 import { eq, and, ne } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
 import { normalizeDomain } from '@/lib/domain-utils';
+import { queryRedirectConflictForPlatform } from '@/lib/redirect-platform-conflict-queries';
+import { getLinkedCampaignCountForPlatformId } from '@/lib/campaign-linked-counts';
 import { publishPlatformsUpdated } from '@/lib/redis';
 
 type RouteContext = {
@@ -61,6 +63,16 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     // Normalize domain (extract hostname from URL if needed)
     const normalizedDomain = normalizeDomain(domain);
+
+    const redirectHit = await queryRedirectConflictForPlatform(normalizedDomain);
+    if (redirectHit !== undefined) {
+      return NextResponse.json(
+        {
+          error: `This domain is already covered by a redirect rule (source: ${redirectHit.sourceDomain}). Change or remove the redirect first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     // Check if name or domain already exists for another platform
     const [existingByName, existingByDomain] = await Promise.all([
@@ -123,6 +135,16 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
+
+    const linked = await getLinkedCampaignCountForPlatformId(id);
+    if (linked > 0) {
+      return NextResponse.json(
+        {
+          error: `Cannot delete this platform while it is targeted by ${linked} campaign(s). Unlink or remove those campaigns first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     const [deletedPlatform] = await db
       .delete(platforms)

@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { resolveEndUserFromRequest } from '@/lib/enduser-auth';
 import { ExtensionAdBlockError } from '@/lib/extension-ad-block-handler';
 import { runServeRedirects } from '@/lib/extension-serve-handlers';
-import { checkServeRedirectsRateLimit } from '@/lib/rate-limit';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,9 +22,6 @@ const bodySchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
-    const limited = await checkServeRedirectsRateLimit(request);
-    if (limited) return limited;
-
     const resolved = await resolveEndUserFromRequest(request);
     if (!resolved) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

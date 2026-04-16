@@ -30,14 +30,11 @@ const EVENT_TYPES = new Set<string>([
   'visit',
 ]);
 
-/** Types counted on the main dashboard chart and “served” KPI (campaign-linked only). */
-export const DASHBOARD_SERVED_EVENT_TYPES = ['ad', 'popup', 'notification'] as const;
+/** Served campaign impressions (campaign-linked KPI; excludes visits). */
+export const DASHBOARD_SERVED_EVENT_TYPES = ['ad', 'popup', 'notification', 'redirect'] as const;
 
-/** Types included in the home dashboard “Extension events” chart (ad, popup, notification, redirect). */
-export const DASHBOARD_CHART_EVENT_TYPES = [
-  ...DASHBOARD_SERVED_EVENT_TYPES,
-  'redirect',
-] as const;
+/** Extension events chart: served types plus visits. */
+export const DASHBOARD_CHART_EVENT_TYPES = [...DASHBOARD_SERVED_EVENT_TYPES, 'visit'] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -257,6 +254,45 @@ export async function listEventsPage(
     .orderBy(desc(enduserEvents.createdAt))
     .limit(opts.limit)
     .offset(opts.offset)) as EventLogRow[];
+}
+
+/**
+ * Combined pagination + total count in a single query using `count(*) OVER()`.
+ * Resolves filters once internally, eliminating the separate countEvents round-trip.
+ */
+export async function listEventsPageWithCount(
+  role: 'user' | 'admin',
+  userId: string,
+  filters: EventsDashboardFilters,
+  opts: { limit: number; offset: number }
+): Promise<{ rows: EventLogRow[]; totalCount: number }> {
+  const { filters: f, impossible } = await resolveEventsDashboardFilters(filters);
+  if (impossible) return { rows: [], totalCount: 0 };
+
+  const fw = filterWhereClause(f);
+  void role;
+  void userId;
+
+  const base = db
+    .select({
+      ...eventLogSelect,
+      totalCount: sql<number>`count(*) over()::int`,
+    })
+    .from(enduserEvents)
+    .leftJoin(endUsers, eq(endUsers.identifier, enduserEvents.userIdentifier));
+
+  const filtered = fw ? base.where(fw) : base;
+  const rawRows = await filtered
+    .orderBy(desc(enduserEvents.createdAt))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  const totalCount = rawRows[0]?.totalCount ?? 0;
+  const rows = rawRows.map(({ totalCount, ...row }) => {
+    void totalCount;
+    return row;
+  }) as EventLogRow[];
+  return { rows, totalCount };
 }
 
 export async function listEventsForExport(

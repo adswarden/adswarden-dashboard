@@ -86,7 +86,7 @@ export function LiveConnectionsCard() {
           {displayCount === null ? (displayError ? '—' : '…') : displayCount}
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Open browser connections from the extension right now
+          Live browser connections
         </p>
       </CardContent>
     </Card>

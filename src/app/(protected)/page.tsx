@@ -6,8 +6,9 @@ import { redirect } from 'next/navigation';
 import { database as db } from '@/db';
 import { campaigns, enduserEvents, endUsers } from '@/db/schema';
 import { DASHBOARD_SERVED_EVENT_TYPES } from '@/lib/events-dashboard';
-import { and, desc, eq, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, desc, inArray, isNotNull, ne, sql } from 'drizzle-orm';
 import { campaignRowNotSoftDeleted } from '@/lib/campaign-soft-delete-sql';
+import { getPaymentsSummary } from '@/lib/payments-dashboard';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { IconPlus } from '@tabler/icons-react';
@@ -20,17 +21,32 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
+function formatUsdFromCents(cents: number): string {
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+  }).format(cents / 100);
+}
+
+function percentChangeVsPriorMonth(current: number, prior: number): number | null {
+  if (prior <= 0) return null;
+  return Math.round(((current - prior) / prior) * 100);
+}
+
 export default async function DashboardPage() {
   const session = await getSessionWithRole();
   if (!session) redirect('/login');
 
-  const campaignActiveWhere = eq(campaigns.status, 'active');
-  const totalCampaignsWhere = campaignRowNotSoftDeleted;
+  const isAdmin = session.role === 'admin';
 
-  const totalCampaignsPromise = db
-    .select({ count: sql<number>`count(*)` })
-    .from(campaigns)
-    .where(totalCampaignsWhere);
+  // Single conditional-aggregation query replaces two separate campaign count queries.
+  const campaignCountsPromise = db
+    .select({
+      total: sql<number>`count(*) filter (where ${ne(campaigns.status, 'deleted')})::int`,
+      active: sql<number>`count(*) filter (where ${campaigns.status} = 'active')::int`,
+    })
+    .from(campaigns);
 
   const impressionsCountPromise = db
     .select({ count: sql<number>`count(*)` })
@@ -51,23 +67,19 @@ export default async function DashboardPage() {
 
   const extensionUsersPromise = db.select({ count: sql<number>`count(*)` }).from(endUsers);
 
-  const [activeCampaignsCount, totalCampaignsCount, impressionsCount, extensionUsersCount, recentCampaigns] =
+  const [campaignCounts, impressionsCount, extensionUsersCount, recentCampaigns, paymentSummary] =
     await Promise.all([
-      db
-        .select({ count: sql<number>`count(*)` })
-        .from(campaigns)
-        .where(campaignActiveWhere),
-      totalCampaignsPromise,
+      campaignCountsPromise,
       impressionsCountPromise,
       extensionUsersPromise,
       recentCampaignsPromise,
+      isAdmin ? getPaymentsSummary() : Promise.resolve(null),
     ]);
 
-  const activeCampaigns = Number(activeCampaignsCount[0]?.count || 0);
-  const totalCampaigns = Number(totalCampaignsCount[0]?.count || 0);
+  const activeCampaigns = Number(campaignCounts[0]?.active || 0);
+  const totalCampaigns = Number(campaignCounts[0]?.total || 0);
   const campaignImpressions = Number(impressionsCount[0]?.count || 0);
   const activeUsers = Number(extensionUsersCount[0]?.count || 0);
-  const isAdmin = session.role === 'admin';
 
   return (
     <div className="flex flex-col gap-6 p-4 md:p-6">
@@ -84,6 +96,18 @@ export default async function DashboardPage() {
         campaignImpressions={campaignImpressions}
         activeUsers={activeUsers}
         extraCard={<LiveConnectionsCard />}
+        paymentsThisMonth={
+          isAdmin && paymentSummary
+            ? {
+                amountLabel: formatUsdFromCents(paymentSummary.totalThisMonthCents),
+                completedCount: paymentSummary.completedPaymentsThisMonthCount,
+                changePercent: percentChangeVsPriorMonth(
+                  paymentSummary.totalThisMonthCents,
+                  paymentSummary.totalPriorMonthCents
+                ),
+              }
+            : undefined
+        }
       />
 
       <ChartAreaInteractiveDynamic />

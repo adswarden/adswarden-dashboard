@@ -3,6 +3,7 @@ import { database as db } from '@/db';
 import { ads } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
+import { getLinkedCampaignCountForAdId } from '@/lib/campaign-linked-counts';
 import { publishAdsUpdated } from '@/lib/redis';
 
 type RouteContext = {
@@ -92,6 +93,16 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
     }
 
     const { id } = await context.params;
+
+    const linked = await getLinkedCampaignCountForAdId(id);
+    if (linked > 0) {
+      return NextResponse.json(
+        {
+          error: `Cannot delete this ad while it is used by ${linked} campaign(s). Unlink or remove those campaigns first.`,
+        },
+        { status: 409 }
+      );
+    }
 
     const [deletedAd] = await db
       .delete(ads)

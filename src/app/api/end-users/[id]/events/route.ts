@@ -53,6 +53,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         userIdentifier: r.userIdentifier,
         endUserUuid: r.endUserUuid,
         email: r.email,
+        plan: r.plan,
         campaignId: r.campaignId,
         domain: r.domain,
         type: r.type,

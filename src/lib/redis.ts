@@ -9,6 +9,19 @@ const REALTIME_COUNT_CHANNEL = 'realtime:connection_count';
 const EXTENSION_PLATFORMS_KEY = 'extension:platforms:list';
 const EXTENSION_PLATFORMS_TTL_SEC = 60;
 
+/** Cached active campaign rows for extension serve/live paths */
+const EXTENSION_CAMPAIGNS_KEY_ALL = 'extension:campaigns:active:all';
+const EXTENSION_CAMPAIGNS_KEY_ADS = 'extension:campaigns:active:ads';
+const EXTENSION_CAMPAIGNS_KEY_REDIRECTS = 'extension:campaigns:active:redirects';
+const EXTENSION_CAMPAIGNS_TTL_SEC = 20;
+
+export const EXTENSION_CAMPAIGNS_KEYS = {
+  all: EXTENSION_CAMPAIGNS_KEY_ALL,
+  ads: EXTENSION_CAMPAIGNS_KEY_ADS,
+  redirects: EXTENSION_CAMPAIGNS_KEY_REDIRECTS,
+} as const;
+export type CampaignCacheKey = keyof typeof EXTENSION_CAMPAIGNS_KEYS;
+
 /** Atomically DECR connection count and floor stored value at 0 (avoids negative keys in Redis). */
 const DECR_CONNECTION_COUNT_LUA = `
 local v = redis.call('DECR', KEYS[1])
@@ -144,12 +157,62 @@ export async function publishPlatformsUpdated(): Promise<void> {
 }
 
 /**
+ * Read cached active campaign rows for the given key.
+ * Generic over T so callers get typed results without a redis → campaign import cycle.
+ */
+export async function getCachedActiveCampaigns<T>(key: string): Promise<T[] | null> {
+  const client = await getRedisClient();
+  if (!client) return null;
+  try {
+    const raw = await client.get(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return null;
+    return parsed as T[];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Store active campaign rows in Redis with a short TTL.
+ */
+export async function setCachedActiveCampaigns<T>(key: string, rows: T[]): Promise<void> {
+  const client = await getRedisClient();
+  if (!client) return;
+  try {
+    await client.set(key, JSON.stringify(rows), { EX: EXTENSION_CAMPAIGNS_TTL_SEC });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Invalidate all active-campaign cache entries (call on campaign create/update/delete).
+ */
+export async function invalidateActiveCampaignCache(): Promise<void> {
+  const client = await getRedisClient();
+  if (!client) return;
+  try {
+    await client.del([
+      EXTENSION_CAMPAIGNS_KEY_ALL,
+      EXTENSION_CAMPAIGNS_KEY_ADS,
+      EXTENSION_CAMPAIGNS_KEY_REDIRECTS,
+    ]);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * Notify extension SSE listeners that campaign targeting may have changed.
+ * Also invalidates the active-campaign Redis cache so the next serve request reloads from DB.
  */
 export async function publishCampaignUpdated(campaignId: string): Promise<void> {
-  await publishRealtimeNotification(
-    JSON.stringify({ type: 'campaign_updated', campaignId })
-  );
+  await Promise.all([
+    invalidateActiveCampaignCache(),
+    publishRealtimeNotification(JSON.stringify({ type: 'campaign_updated', campaignId })),
+  ]);
 }
 
 /** Admin changed redirect rows — extension SSE should refresh cached redirect rules. */

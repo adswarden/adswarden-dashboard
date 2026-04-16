@@ -163,8 +163,7 @@ export const campaigns = pgTable(
       .default(sql`'{}'::varchar(2)[]`),
     createdBy: varchar('created_by', { length: 255 })
       .notNull()
-      .default(SYSTEM_USER_ID)
-      .references(() => user.id, { onDelete: 'set default' }),
+      .default(SYSTEM_USER_ID),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

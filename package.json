@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:integration": "EXTENSION_INTEGRATION=1 vitest run tests/user-flow/extension/ --no-file-parallelism",
     "test:extension-v2": "EXTENSION_INTEGRATION=1 vitest run tests/user-flow/extension/extension-v2-http.integration.test.ts --no-file-parallelism",
+    "test:sse-live": "EXTENSION_INTEGRATION=1 vitest run tests/user-flow/extension/extension-sse-live-connection.integration.test.ts --no-file-parallelism",
     "test:frequency-load": "EXTENSION_INTEGRATION=1 vitest run tests/user-flow/extension/extension-multi-user-frequency-load.integration.test.ts --no-file-parallelism",
     "test:unit": "vitest run tests/task-based/auth-scope.test.ts",
     "test:watch": "vitest",
