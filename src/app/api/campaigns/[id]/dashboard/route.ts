@@ -38,7 +38,38 @@ export async function GET(
     /** Served impressions only — excludes passive `visit` rows; chart still uses all event types. */
     const periodWindowServed = and(periodWindow, ne(enduserEvents.type, 'visit'));
 
-    const [kpiCurRow, chartAggRows, topDomainsRaw, countryDistribution] = await Promise.all([
+    // Build conditional promises for linked content and platform domains upfront,
+    // then run everything — analytics + metadata — in a single Promise.all.
+    const platformIds = accessible.platformIds?.length ? [...accessible.platformIds] : [];
+
+    type LinkedContentResult =
+      | { type: 'ad'; id: string; name: string; description: string | null; imageUrl: string | null; targetUrl: string | null }
+      | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null }
+      | { type: 'redirect'; id: string; name: string; sourceDomain: string; includeSubdomains: boolean; destinationUrl: string }
+      | null;
+
+    const linkedContentPromise: Promise<LinkedContentResult> = accessible.adId
+      ? db
+          .select({ id: ads.id, name: ads.name, description: ads.description, imageUrl: ads.imageUrl, targetUrl: ads.targetUrl })
+          .from(ads).where(eq(ads.id, accessible.adId)).limit(1)
+          .then(([ad]) => ad ? { type: 'ad' as const, ...ad } : null)
+      : accessible.notificationId
+      ? db
+          .select({ id: notifications.id, title: notifications.title, message: notifications.message, ctaLink: notifications.ctaLink })
+          .from(notifications).where(eq(notifications.id, accessible.notificationId)).limit(1)
+          .then(([n]) => n ? { type: 'notification' as const, ...n } : null)
+      : accessible.redirectId
+      ? db
+          .select({ id: redirects.id, name: redirects.name, sourceDomain: redirects.sourceDomain, includeSubdomains: redirects.includeSubdomains, destinationUrl: redirects.destinationUrl })
+          .from(redirects).where(eq(redirects.id, accessible.redirectId)).limit(1)
+          .then(([r]) => r ? { type: 'redirect' as const, ...r } : null)
+      : Promise.resolve(null);
+
+    const platformDomainsPromise = platformIds.length > 0
+      ? db.select({ domain: platforms.domain }).from(platforms).where(inArray(platforms.id, platformIds))
+      : Promise.resolve([] as { domain: string }[]);
+
+    const [kpiCurRow, chartAggRows, topDomainsRaw, countryDistribution, linkedContent, platformDomainsRows] = await Promise.all([
       db
         .select({
           impressions: sql<number>`count(*)::int`,
@@ -69,6 +100,8 @@ export async function GET(
         .groupBy(enduserEvents.country)
         .orderBy(desc(sql`count(*)`))
         .limit(15),
+      linkedContentPromise,
+      platformDomainsPromise,
     ]);
 
     const impressions = Number(kpiCurRow[0]?.impressions ?? 0);
@@ -114,65 +147,7 @@ export async function GET(
       .slice(0, 10)
       .map(({ displayDomain, count }) => ({ domain: displayDomain, count }));
 
-    const platformIds = accessible.platformIds?.length ? [...accessible.platformIds] : [];
-    const platformDomains =
-      platformIds.length > 0
-        ? (
-          await db
-            .select({ domain: platforms.domain })
-            .from(platforms)
-            .where(inArray(platforms.id, platformIds))
-        ).map((p) => p.domain)
-        : [];
-
-    let linkedContent:
-      | { type: 'ad'; id: string; name: string; description: string | null; imageUrl: string | null; targetUrl: string | null }
-      | { type: 'notification'; id: string; title: string; message: string; ctaLink: string | null }
-      | {
-        type: 'redirect';
-        id: string;
-        name: string;
-        sourceDomain: string;
-        includeSubdomains: boolean;
-        destinationUrl: string;
-      }
-      | null = null;
-    if (accessible.adId) {
-      const [ad] = await db
-        .select({ id: ads.id, name: ads.name, description: ads.description, imageUrl: ads.imageUrl, targetUrl: ads.targetUrl })
-        .from(ads)
-        .where(eq(ads.id, accessible.adId))
-        .limit(1);
-      if (ad) linkedContent = { type: 'ad', id: ad.id, name: ad.name, description: ad.description, imageUrl: ad.imageUrl, targetUrl: ad.targetUrl };
-    } else if (accessible.notificationId) {
-      const [n] = await db
-        .select({ id: notifications.id, title: notifications.title, message: notifications.message, ctaLink: notifications.ctaLink })
-        .from(notifications)
-        .where(eq(notifications.id, accessible.notificationId))
-        .limit(1);
-      if (n) linkedContent = { type: 'notification', id: n.id, title: n.title, message: n.message, ctaLink: n.ctaLink };
-    } else if (accessible.redirectId) {
-      const [r] = await db
-        .select({
-          id: redirects.id,
-          name: redirects.name,
-          sourceDomain: redirects.sourceDomain,
-          includeSubdomains: redirects.includeSubdomains,
-          destinationUrl: redirects.destinationUrl,
-        })
-        .from(redirects)
-        .where(eq(redirects.id, accessible.redirectId))
-        .limit(1);
-      if (r)
-        linkedContent = {
-          type: 'redirect',
-          id: r.id,
-          name: r.name,
-          sourceDomain: r.sourceDomain,
-          includeSubdomains: r.includeSubdomains,
-          destinationUrl: r.destinationUrl,
-        };
-    }
+    const platformDomains = platformDomainsRows.map((p) => p.domain);
 
     const analyticsPeriod = {
       from: start.toISOString().slice(0, 10),

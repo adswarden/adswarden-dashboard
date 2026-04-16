@@ -1,16 +1,13 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { CopyableIdCell } from "@/components/copyable-id-cell"
+import { DateDisplayToggleButton } from "@/components/date-display-toggle-button"
+import { ExportEventsCsvButton } from "@/components/export-events-csv-button"
+import { HumanReadableDate } from "@/components/human-readable-date"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -21,9 +18,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { TablePagination } from "@/components/ui/table-pagination"
-import { Badge } from "@/components/ui/badge"
 import { getCountryName } from "@/lib/countries"
-import { IconList } from "@tabler/icons-react"
+import { IconChartBar } from "@tabler/icons-react"
 
 const PAGE_SIZE = 25
 
@@ -32,6 +28,7 @@ type EventRow = {
   userIdentifier: string
   endUserUuid: string | null
   email: string | null
+  plan: "trial" | "paid" | null
   campaignId: string | null
   domain: string | null
   type: string
@@ -51,6 +48,7 @@ const typeColors: Record<string, "default" | "secondary" | "outline" | "destruct
   ad: "default",
   notification: "secondary",
   popup: "outline",
+  request: "secondary",
   redirect: "outline",
   visit: "secondary",
 }
@@ -70,6 +68,8 @@ export function EndUserEventsTimeline({ endUserId, className }: EndUserEventsTim
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [payload, setPayload] = useState<ApiResponse | null>(null)
+
+  const csvFilterParams = useMemo(() => ({ endUserIdExact: endUserId }), [endUserId])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -97,125 +97,178 @@ export function EndUserEventsTimeline({ endUserId, className }: EndUserEventsTim
   const totalPages =
     payload && payload.total > 0 ? Math.ceil(payload.total / payload.pageSize) : 0
   const rows = payload?.data ?? []
+  const totalCount = payload?.total ?? 0
+
+  const paginationEl =
+    !loading && totalCount > 0 ? (
+      <TablePagination
+        mode="button"
+        page={page}
+        totalPages={totalPages}
+        totalCount={totalCount}
+        pageSize={payload?.pageSize ?? PAGE_SIZE}
+        onPageChange={setPage}
+      />
+    ) : null
 
   return (
     <section aria-label="Extension events for this user" className={className}>
-      <Card className="overflow-hidden shadow-sm">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between space-y-0">
-          <div className="space-y-1 min-w-0">
-            <CardTitle className="text-base flex items-center gap-2">
-              <IconList className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-              Event timeline
-            </CardTitle>
-            <CardDescription className="text-xs leading-relaxed">
-              Recent extension telemetry for this user, newest first. Open the full Events log for
-              filters and export.
-            </CardDescription>
+      <div className="space-y-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <IconChartBar className="h-5 w-5 shrink-0" aria-hidden />
+              <span className="truncate">
+                Event log ({loading ? "…" : totalCount.toLocaleString()})
+              </span>
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Newest first.{" "}
+              <Link
+                href={eventsDeepLink(endUserId)}
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                Open full Events log
+              </Link>{" "}
+              for filters and cross-user views.
+            </p>
           </div>
-          <Button variant="outline" size="sm" className="w-full sm:w-auto shrink-0" asChild>
-            <Link href={eventsDeepLink(endUserId)}>View in Events</Link>
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-0">
-          {loading && (
-            <div className="space-y-2">
-              <Skeleton className="h-10 w-full rounded-md" />
-              <Skeleton className="h-40 w-full rounded-md" />
-            </div>
-          )}
+          <div className="shrink-0 flex flex-wrap items-center gap-2">
+            {paginationEl}
+            <ExportEventsCsvButton filterParams={csvFilterParams} />
+            <DateDisplayToggleButton />
+          </div>
+        </div>
 
-          {error && !loading && (
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive flex flex-col gap-2">
-              <p>{error}</p>
-              <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => void load()}>
-                Retry
-              </Button>
-            </div>
-          )}
+        {loading && (
+          <div className="space-y-2 rounded-lg bg-muted/10 p-4">
+            <Skeleton className="h-10 w-full rounded-md" />
+            <Skeleton className="h-40 w-full rounded-md" />
+          </div>
+        )}
 
-          {!loading && !error && payload && payload.total === 0 && (
-            <div className="rounded-lg border border-dashed bg-muted/20 px-4 py-8 text-center text-sm text-muted-foreground">
-              No events recorded for this user yet.
-            </div>
-          )}
+        {error && !loading && (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive flex flex-col gap-2">
+            <p>{error}</p>
+            <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => void load()}>
+              Retry
+            </Button>
+          </div>
+        )}
 
-          {!loading && !error && payload && payload.total > 0 && (
-            <>
-              <div className="rounded-md border overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead className="text-muted-foreground text-xs font-normal whitespace-nowrap">
-                        Type
-                      </TableHead>
-                      <TableHead className="text-muted-foreground text-xs font-normal whitespace-nowrap">
-                        Domain
-                      </TableHead>
-                      <TableHead className="text-muted-foreground text-xs font-normal whitespace-nowrap">
-                        Campaign
-                      </TableHead>
-                      <TableHead className="text-muted-foreground text-xs font-normal whitespace-nowrap">
-                        Country
-                      </TableHead>
-                      <TableHead className="text-muted-foreground text-xs font-normal whitespace-nowrap">
-                        Time
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.map((log) => (
-                      <TableRow key={log.id}>
-                        <TableCell className="py-2">
-                          <Badge variant={typeColors[log.type] ?? "secondary"}>{log.type}</Badge>
-                        </TableCell>
-                        <TableCell className="py-2 max-w-[200px]">
-                          <span className="truncate block font-mono text-xs" title={log.domain ?? ""}>
-                            {log.domain ?? "—"}
+        {!loading && !error && payload && totalCount === 0 && (
+          <div className="rounded-lg bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
+            No events recorded for this user yet.
+          </div>
+        )}
+
+        {!loading && !error && payload && totalCount > 0 && (
+          <div className="min-w-0">
+            <div className="w-full overflow-x-auto">
+              <Table className="w-full table-auto">
+                <colgroup>
+                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "auto" }} />
+                  <col style={{ width: "80px" }} />
+                  <col style={{ width: "minmax(120px, 1fr)" }} />
+                  <col style={{ width: "90px" }} />
+                  <col style={{ width: "170px" }} />
+                </colgroup>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-muted-foreground text-xs font-normal">
+                      User identifier
+                    </TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Email</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Plan</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Campaign</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Domain</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Country</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">User agent</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Type</TableHead>
+                    <TableHead className="text-muted-foreground text-xs font-normal">Timestamp</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell className="py-2 overflow-hidden">
+                        <CopyableIdCell
+                          value={log.userIdentifier}
+                          truncateLength={12}
+                          copyLabel="User identifier copied to clipboard"
+                          href={log.endUserUuid ? `/users/${log.endUserUuid}` : undefined}
+                        />
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden text-sm">
+                        {log.email ? (
+                          <span className="truncate block max-w-[180px]" title={log.email}>
+                            {log.email}
                           </span>
-                        </TableCell>
-                        <TableCell className="py-2 overflow-hidden">
-                          {log.campaignId ? (
-                            <CopyableIdCell
-                              value={log.campaignId}
-                              href={`/campaigns/${log.campaignId}`}
-                              truncateLength={8}
-                              copyLabel="Campaign ID copied to clipboard"
-                            />
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="py-2">
-                          {log.country ? (
-                            <span title={getCountryName(log.country)} className="uppercase text-sm">
-                              {log.country}
-                            </span>
-                          ) : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="py-2 text-sm text-muted-foreground whitespace-nowrap min-w-0">
-                          {new Date(log.createdAt).toLocaleString()}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              {totalPages > 1 ? (
-                <TablePagination
-                  mode="button"
-                  page={page}
-                  totalPages={totalPages}
-                  totalCount={payload.total}
-                  pageSize={payload.pageSize}
-                  onPageChange={setPage}
-                />
-              ) : null}
-            </>
-          )}
-        </CardContent>
-      </Card>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden text-sm">
+                        {log.plan ? (
+                          <Badge variant="outline" className="font-normal capitalize">
+                            {log.plan}
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden">
+                        {log.campaignId ? (
+                          <CopyableIdCell
+                            value={log.campaignId}
+                            href={`/campaigns/${log.campaignId}`}
+                            truncateLength={8}
+                            copyLabel="Campaign ID copied to clipboard"
+                          />
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden">
+                        <span className="truncate block" title={log.domain ?? ""}>
+                          {log.domain ?? "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden">
+                        {log.country ? (
+                          <span title={getCountryName(log.country)} className="uppercase text-sm">
+                            {log.country}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden text-sm text-muted-foreground max-w-[220px]">
+                        <span
+                          className="line-clamp-2 font-mono text-xs"
+                          title={log.userAgent ?? undefined}
+                        >
+                          {log.userAgent ?? "—"}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-2 overflow-hidden">
+                        <Badge variant={typeColors[log.type] ?? "secondary"}>{log.type}</Badge>
+                      </TableCell>
+                      <TableCell className="py-2 text-sm text-muted-foreground min-w-0">
+                        <HumanReadableDate date={new Date(log.createdAt)} />
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </div>
+        )}
+      </div>
     </section>
   )
 }

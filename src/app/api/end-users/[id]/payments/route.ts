@@ -92,7 +92,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (p.endDate) {
       await db
         .update(endUsers)
-        .set({ endDate: new Date(p.endDate), updatedAt: new Date() })
+        .set({
+          endDate: new Date(p.endDate),
+          updatedAt: new Date(),
+          ...(p.status === 'completed' && { plan: 'paid' as const }),
+        })
         .where(eq(endUsers.id, id));
     }
 

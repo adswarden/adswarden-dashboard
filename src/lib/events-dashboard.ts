@@ -256,6 +256,42 @@ export async function listEventsPage(
     .offset(opts.offset)) as EventLogRow[];
 }
 
+/**
+ * Combined pagination + total count in a single query using `count(*) OVER()`.
+ * Resolves filters once internally, eliminating the separate countEvents round-trip.
+ */
+export async function listEventsPageWithCount(
+  role: 'user' | 'admin',
+  userId: string,
+  filters: EventsDashboardFilters,
+  opts: { limit: number; offset: number }
+): Promise<{ rows: EventLogRow[]; totalCount: number }> {
+  const { filters: f, impossible } = await resolveEventsDashboardFilters(filters);
+  if (impossible) return { rows: [], totalCount: 0 };
+
+  const fw = filterWhereClause(f);
+  void role;
+  void userId;
+
+  const base = db
+    .select({
+      ...eventLogSelect,
+      totalCount: sql<number>`count(*) over()::int`,
+    })
+    .from(enduserEvents)
+    .leftJoin(endUsers, eq(endUsers.identifier, enduserEvents.userIdentifier));
+
+  const filtered = fw ? base.where(fw) : base;
+  const rawRows = await filtered
+    .orderBy(desc(enduserEvents.createdAt))
+    .limit(opts.limit)
+    .offset(opts.offset);
+
+  const totalCount = rawRows[0]?.totalCount ?? 0;
+  const rows = rawRows.map(({ totalCount: _tc, ...row }) => row) as EventLogRow[];
+  return { rows, totalCount };
+}
+
 export async function listEventsForExport(
   role: 'user' | 'admin',
   userId: string,

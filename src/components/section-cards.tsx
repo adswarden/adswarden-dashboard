@@ -1,4 +1,4 @@
-import { IconEye, IconTrendingUp, IconUsers } from "@tabler/icons-react"
+import { IconCreditCard, IconEye, IconTrendingDown, IconTrendingUp, IconUsers } from "@tabler/icons-react"
 
 import { Badge } from "@/components/ui/badge"
 import {
@@ -7,6 +7,14 @@ import {
   CardTitle,
   CardContent,
 } from "@/components/ui/card"
+import { cn } from "@/lib/utils"
+
+export type DashboardPaymentsThisMonth = {
+  amountLabel: string;
+  completedCount: number;
+  /** Vs. prior calendar month revenue; omit badge when null. */
+  changePercent: number | null;
+};
 
 interface SectionCardsProps {
   activeCampaigns: number;
@@ -18,6 +26,8 @@ interface SectionCardsProps {
   extensionUsersCaption?: string;
   /** Optional card to prepend to the grid (e.g. live connections) */
   extraCard?: React.ReactNode;
+  /** Admin-only: completed payment revenue this calendar month. */
+  paymentsThisMonth?: DashboardPaymentsThisMonth;
 }
 
 export function SectionCards({
@@ -28,13 +38,17 @@ export function SectionCards({
   liveUsers,
   extensionUsersCaption,
   extraCard,
+  paymentsThisMonth,
 }: SectionCardsProps) {
   const activePercentage = totalCampaigns > 0 ? Math.round((activeCampaigns / totalCampaigns) * 100) : 0;
 
   return (
     <section
       aria-label="Key metrics"
-      className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4"
+      className={cn(
+        'grid grid-cols-1 gap-4 md:grid-cols-2',
+        paymentsThisMonth ? 'lg:grid-cols-3 xl:grid-cols-5' : 'lg:grid-cols-4'
+      )}
     >
       {extraCard}
       <Card className="border-border bg-card/40 py-4 shadow-none">
@@ -77,10 +91,44 @@ export function SectionCards({
           <p className="text-xs leading-relaxed text-muted-foreground">
             {liveUsers !== undefined
               ? `${liveUsers} live right now`
-              : extensionUsersCaption ?? 'All accounts registered with the extension'}
+              : extensionUsersCaption ?? 'All extension registered accounts'}
           </p>
         </CardContent>
       </Card>
+      {paymentsThisMonth ? (
+        <Card className="border-border bg-card/40 py-4 shadow-none">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Payments this month</CardTitle>
+            {paymentsThisMonth.changePercent != null ? (
+              <Badge
+                variant="outline"
+                className={cn(
+                  'tabular-nums',
+                  paymentsThisMonth.changePercent >= 0
+                    ? 'bg-green-500/10 text-green-600 dark:text-green-400'
+                    : 'bg-red-500/10 text-red-600 dark:text-red-400'
+                )}
+              >
+                {paymentsThisMonth.changePercent >= 0 ? (
+                  <IconTrendingUp className="size-3" aria-hidden />
+                ) : (
+                  <IconTrendingDown className="size-3" aria-hidden />
+                )}
+                {paymentsThisMonth.changePercent >= 0 ? '+' : ''}
+                {paymentsThisMonth.changePercent}%
+              </Badge>
+            ) : (
+              <IconCreditCard className="h-4 w-4 text-muted-foreground" aria-hidden />
+            )}
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold tabular-nums">{paymentsThisMonth.amountLabel}</div>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              {paymentsThisMonth.completedCount.toLocaleString()} completed
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
     </section>
   )
 }

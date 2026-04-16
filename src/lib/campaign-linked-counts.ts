@@ -1,6 +1,6 @@
 import { database as db } from '@/db';
 import { campaigns } from '@/db/schema';
-import { and, arrayContains, count, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, arrayContains, count, eq, inArray, isNotNull, sql } from 'drizzle-orm';
 import { campaignRowNotSoftDeleted } from '@/lib/campaign-soft-delete-sql';
 
 function rowsToMap(
@@ -77,17 +77,47 @@ export async function getLinkedCampaignCountByRedirectId(): Promise<Map<string, 
   return rowsToMap(rows);
 }
 
-/** Load all three aggregates in parallel (e.g. campaign form option lists). */
+/** Load all three aggregates in a single GROUPING SETS query — one table scan instead of three. */
 export async function getAllContentLinkedCampaignCounts(): Promise<{
   byAdId: Map<string, number>;
   byNotificationId: Map<string, number>;
   byRedirectId: Map<string, number>;
 }> {
-  const [byAdId, byNotificationId, byRedirectId] = await Promise.all([
-    getLinkedCampaignCountByAdId(),
-    getLinkedCampaignCountByNotificationId(),
-    getLinkedCampaignCountByRedirectId(),
-  ]);
+  const rows = await db.execute<{
+    ad_id: string | null;
+    notification_id: string | null;
+    redirect_id: string | null;
+    linked_count: number;
+  }>(sql`
+    SELECT
+      ${campaigns.adId}::text          AS ad_id,
+      ${campaigns.notificationId}::text AS notification_id,
+      ${campaigns.redirectId}::text     AS redirect_id,
+      count(*)::int                     AS linked_count
+    FROM ${campaigns}
+    WHERE ${campaigns.status}::text <> 'deleted'
+    GROUP BY GROUPING SETS (
+      (${campaigns.adId}),
+      (${campaigns.notificationId}),
+      (${campaigns.redirectId})
+    )
+    HAVING
+      ${campaigns.adId} IS NOT NULL
+      OR ${campaigns.notificationId} IS NOT NULL
+      OR ${campaigns.redirectId} IS NOT NULL
+  `);
+
+  const byAdId = new Map<string, number>();
+  const byNotificationId = new Map<string, number>();
+  const byRedirectId = new Map<string, number>();
+
+  for (const row of rows) {
+    const cnt = Number(row.linked_count);
+    if (row.ad_id) byAdId.set(row.ad_id, cnt);
+    else if (row.notification_id) byNotificationId.set(row.notification_id, cnt);
+    else if (row.redirect_id) byRedirectId.set(row.redirect_id, cnt);
+  }
+
   return { byAdId, byNotificationId, byRedirectId };
 }
 

@@ -1,20 +1,15 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import Link from "next/link"
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
-  Pie,
-  PieChart,
   XAxis,
   YAxis,
 } from "recharts"
-import { IconChartBar, IconWorld } from "@tabler/icons-react"
+import { IconChartBar, IconExternalLink } from "@tabler/icons-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -25,10 +20,7 @@ import {
 } from "@/components/ui/card"
 import {
   ChartContainer,
-  ChartLegend,
-  ChartLegendContent,
   ChartTooltip,
-  ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart"
 import {
@@ -40,17 +32,15 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group"
+import { ExtensionEventsChartTooltip } from "@/components/extension-events-chart-tooltip"
+import {
+  extensionEventChartAllZeros,
+  extensionEventsChartConfig,
+  type ExtensionEventChartRow,
+} from "@/lib/extension-events-chart"
 import { cn } from "@/lib/utils"
 
 type AnalyticsSummary = {
@@ -78,7 +68,7 @@ type DomainRow = {
   serves: number
 }
 
-type AnalyticsPayload = {
+export type AnalyticsPayload = {
   summary: AnalyticsSummary
   series: SeriesRow[]
   topDomains: DomainRow[]
@@ -94,24 +84,40 @@ const rangeLabels: Record<string, string> = {
   "7d": "Last 7 days",
 }
 
-const timeSeriesConfig = {
-  visit: {
-    label: "Visits",
-    color: "var(--chart-1)",
-  },
-  served: {
-    label: "Served",
-    color: "var(--chart-2)",
-  },
-} satisfies ChartConfig
+function formatYAxisTick(value: number): string {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return "0"
+  const abs = Math.abs(n)
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (abs >= 10_000) return `${Math.round(n / 1_000)}k`
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(Math.round(n))
+}
 
-const PIE_COLORS = [
-  "var(--chart-1)",
-  "var(--chart-2)",
-  "var(--chart-3)",
-  "var(--chart-4)",
-  "var(--chart-5)",
-]
+function niceYAxisTicks(max: number): number[] {
+  if (!Number.isFinite(max) || max <= 0) return [0]
+  /** Tight ceiling so sparse spikes don’t leave a huge empty band above the peak. */
+  const ceil = Math.ceil(max * 1.01)
+  const candidates = [
+    1, 2, 4, 5, 7, 8, 10, 15, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000,
+  ]
+  let best: { step: number; top: number } | null = null
+  for (const c of candidates) {
+    const intervals = Math.ceil(ceil / c)
+    if (intervals > 6) continue
+    const top = intervals * c
+    if (!best || top < best.top) best = { step: c, top }
+  }
+  if (!best) {
+    let step = 1
+    while (Math.ceil(ceil / step) > 6) step *= 2
+    const top = Math.ceil(ceil / step) * step
+    best = { step, top }
+  }
+  const ticks: number[] = []
+  for (let v = 0; v <= best.top; v += best.step) ticks.push(v)
+  return ticks
+}
 
 function eventsDeepLink(endUserUuid: string, startIso: string, endIso: string): string {
   const from = startIso.slice(0, 10)
@@ -120,17 +126,78 @@ function eventsDeepLink(endUserUuid: string, startIso: string, endIso: string): 
   return `/events?${q.toString()}`
 }
 
+function useInView<T extends HTMLElement>(threshold = 0.15) {
+  const ref = useRef<T>(null)
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true)
+          obs.disconnect()
+        }
+      },
+      { threshold }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [threshold])
+
+  return { ref, visible }
+}
+
+function AnimatedSection({
+  children,
+  className,
+  delay = 0,
+}: {
+  children: React.ReactNode
+  className?: string
+  delay?: number
+}) {
+  const { ref, visible } = useInView<HTMLDivElement>()
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "transition-all duration-700 ease-out",
+        visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4",
+        className,
+      )}
+      style={delay ? { transitionDelay: `${delay}ms` } : undefined}
+    >
+      {children}
+    </div>
+  )
+}
+
 export type EndUserAnalyticsSectionProps = {
   endUserId: string
   className?: string
+  /** When true, render without Card chrome so a parent can provide one shell (e.g. bento with profile). */
+  embedded?: boolean
+  /** Pre-loaded 7d analytics data from SSR — skips the initial client-side fetch. */
+  initialData?: AnalyticsPayload | null
+  /** Called whenever the loaded data changes (on mount and after range switches). */
+  onDataLoaded?: (data: AnalyticsPayload | null) => void
 }
 
-export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyticsSectionProps) {
+export function EndUserAnalyticsSection({
+  endUserId,
+  className,
+  embedded = false,
+  initialData,
+  onDataLoaded,
+}: EndUserAnalyticsSectionProps) {
   const [mounted, setMounted] = useState(false)
   const [range, setRange] = useState<"7d" | "30d" | "90d">("7d")
-  const [data, setData] = useState<AnalyticsPayload | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState<AnalyticsPayload | null>(initialData ?? null)
+  const [loading, setLoading] = useState(!initialData)
   const [error, setError] = useState<string | null>(null)
+  const skipInitialFetch = useRef(!!initialData)
 
   useEffect(() => setMounted(true), [])
 
@@ -156,75 +223,78 @@ export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyti
   }, [endUserId, range])
 
   useEffect(() => {
+    if (skipInitialFetch.current) {
+      skipInitialFetch.current = false
+      return
+    }
     void load()
   }, [load])
 
-  const chartRows = useMemo(() => {
+  // Notify parent whenever data changes
+  useEffect(() => {
+    onDataLoaded?.(data)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data])
+
+  const chartRows: ExtensionEventChartRow[] = useMemo(() => {
     if (!data?.series?.length) return []
     return data.series.map((s) => ({
       date: s.date,
       visit: s.visit,
-      served: s.ad + s.popup + s.notification + s.redirect,
+      ad: s.ad,
+      popup: s.popup,
+      notification: s.notification,
+      redirect: s.redirect,
     }))
   }, [data?.series])
 
-  const chartAllZero =
-    chartRows.length > 0 && chartRows.every((d) => d.visit === 0 && d.served === 0)
+  const chartAllZero = chartRows.length > 0 && extensionEventChartAllZeros(chartRows)
 
-  const mixRows = useMemo(() => {
-    if (!data?.summary) return []
-    const s = data.summary
-    return [
-      { label: "Visit", value: s.visit },
-      { label: "Ad", value: s.ad },
-      { label: "Popup", value: s.popup },
-      { label: "Notification", value: s.notification },
-      { label: "Redirect", value: s.redirect },
-    ]
-      .filter((r) => r.value > 0)
-      .sort((a, b) => b.value - a.value)
-  }, [data?.summary])
+  const singleSeriesMax = useMemo(() => {
+    if (!chartRows.length) return 0
+    let max = 0
+    for (const row of chartRows) {
+      for (const v of [row.visit, row.popup, row.notification, row.ad, row.redirect]) {
+        if (v > max) max = v
+      }
+    }
+    return max
+  }, [chartRows])
 
-  const pieChartConfig = useMemo(
-    () =>
-      Object.fromEntries(
-        mixRows.map((r, i) => [
-          r.label,
-          { label: r.label, color: PIE_COLORS[i % PIE_COLORS.length] },
-        ]),
-      ) as ChartConfig,
-    [mixRows],
-  )
-
-  const pieData = useMemo(
-    () => mixRows.map((r) => ({ name: r.label, value: r.value })),
-    [mixRows],
-  )
+  const yAxisTicks = useMemo(() => niceYAxisTicks(singleSeriesMax), [singleSeriesMax])
+  const yAxisTop = yAxisTicks[yAxisTicks.length - 1] ?? 100
 
   const summary = data?.summary
   const deepLink = data && eventsDeepLink(endUserId, data.start, data.end)
 
-  return (
-    <section
-      aria-label="Extension activity analytics"
-      className={cn("flex flex-col gap-4", className)}
+  const header = (
+    <CardHeader
+      className={cn(
+        "flex flex-col gap-3 space-y-0 px-4 pb-0 sm:flex-row sm:items-start sm:justify-between",
+        embedded ? "shrink-0 pt-4" : "pt-0",
+      )}
     >
-      <Card className="@container/analytics overflow-hidden shadow-sm">
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between space-y-0">
-          <div className="space-y-1 min-w-0">
-            <CardTitle className="text-base flex items-center gap-2">
-              <IconChartBar className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
-              Activity from extension telemetry
+          <div className="space-y-1.5 min-w-0">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <IconChartBar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              Extension activity
             </CardTitle>
-            <CardDescription className="text-xs leading-relaxed">
-              Visits, inventory served, and sites from this user&apos;s extension events in the
-              selected range. For raw rows, open Events with this user pre-filtered.
+            <CardDescription className="text-xs leading-relaxed max-w-lg">
+              Daily event breakdown by type for this user. Hover the chart for daily totals.
             </CardDescription>
           </div>
-          <div className="flex flex-col gap-2 sm:items-end shrink-0 w-full sm:w-auto">
+          <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
             {deepLink ? (
-              <Button variant="outline" size="sm" className="w-full sm:w-auto" asChild>
-                <Link href={deepLink}>View in Events</Link>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 w-full border-0 bg-muted/35 text-foreground hover:bg-muted/50 dark:bg-muted/25 dark:hover:bg-muted/40 sm:w-auto"
+                asChild
+              >
+                <Link href={deepLink}>
+                  View in Events
+                  <IconExternalLink className="h-3.5 w-3.5 opacity-70" aria-hidden />
+                </Link>
               </Button>
             ) : null}
             {mounted ? (
@@ -266,13 +336,27 @@ export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyti
               <span className="text-xs text-muted-foreground">{rangeLabels[range]}</span>
             )}
           </div>
-        </CardHeader>
-        <CardContent className="space-y-6 pt-0">
+    </CardHeader>
+  )
+
+  const body = (
+    <CardContent
+      className={cn(
+        "px-4 pt-2",
+        embedded
+          ? "flex min-h-0 flex-1 flex-col pb-4"
+          : "space-y-4 pt-0 pb-0",
+      )}
+    >
           {loading && (
-            <div className="space-y-3">
-              <Skeleton className="h-24 w-full rounded-lg" />
-              <Skeleton className="h-[240px] w-full rounded-lg" />
-            </div>
+            <Skeleton
+              className={cn(
+                "w-full rounded-lg",
+                embedded
+                  ? "flex-1"
+                  : "h-[min(22rem,45vh)] min-h-[240px]",
+              )}
+            />
           )}
 
           {error && !loading && (
@@ -293,228 +377,156 @@ export function EndUserAnalyticsSection({ endUserId, className }: EndUserAnalyti
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-                    {(
-                      [
-                        ["total", "Total events", summary.total],
-                        ["visit", "Visits", summary.visit],
-                        ["served", "Served", summary.served],
-                      ] as const
-                    ).map(([key, label, value]) => (
-                      <Card key={key} className="min-w-0 gap-0 py-0 shadow-sm">
-                        <CardHeader className="px-4 py-3 space-y-1">
-                          <CardDescription className="text-xs leading-snug">{label}</CardDescription>
-                          <CardTitle className="text-xl font-semibold tabular-nums leading-none">
-                            {value.toLocaleString()}
-                          </CardTitle>
-                        </CardHeader>
-                      </Card>
-                    ))}
-                  </div>
-
-                  <div className="space-y-2">
-                    <h3 className="text-sm font-medium">Activity over time</h3>
+                  <AnimatedSection className={embedded ? "flex min-h-0 flex-1 flex-col" : "space-y-3"}>
+                    {!embedded && (
+                      <h3 className="text-sm font-medium text-muted-foreground">Activity over time</h3>
+                    )}
                     {chartRows.length === 0 || chartAllZero ? (
                       <p className="text-sm text-muted-foreground py-8 text-center rounded-lg border border-dashed">
                         No daily activity in this range.
                       </p>
                     ) : (
-                      <ChartContainer config={timeSeriesConfig} className="aspect-auto h-[240px] w-full">
-                        <AreaChart data={chartRows} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
-                          <defs>
-                            <linearGradient id="fillVisitAn" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="var(--color-visit)" stopOpacity={0.9} />
-                              <stop offset="95%" stopColor="var(--color-visit)" stopOpacity={0.12} />
-                            </linearGradient>
-                            <linearGradient id="fillServedAn" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="var(--color-served)" stopOpacity={0.85} />
-                              <stop offset="95%" stopColor="var(--color-served)" stopOpacity={0.1} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid vertical={false} />
-                          <XAxis
-                            dataKey="date"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            minTickGap={28}
-                            tickFormatter={(value) =>
-                              new Date(String(value) + "T12:00:00Z").toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                              })
-                            }
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={
-                              <ChartTooltipContent
-                                labelFormatter={(value) =>
-                                  new Date(String(value) + "T12:00:00Z").toLocaleDateString("en-US", {
-                                    month: "short",
-                                    day: "numeric",
-                                    year: "numeric",
-                                  })
-                                }
-                                indicator="dot"
-                              />
-                            }
-                          />
-                          <Area
-                            type="natural"
-                            dataKey="visit"
-                            stackId="a"
-                            stroke="var(--color-visit)"
-                            fill="url(#fillVisitAn)"
-                          />
-                          <Area
-                            type="natural"
-                            dataKey="served"
-                            stackId="a"
-                            stroke="var(--color-served)"
-                            fill="url(#fillServedAn)"
-                          />
-                        </AreaChart>
-                      </ChartContainer>
-                    )}
-                    <p className="text-xs text-muted-foreground">
-                      Stacked: visits (bottom) and served events (ad, popup, notification, redirect) on top.
-                    </p>
-                  </div>
-
-                  <div className="grid gap-6 xl:grid-cols-2">
-                    <div className="space-y-2 min-w-0">
-                      <h3 className="text-sm font-medium">Mix by event type</h3>
-                      {mixRows.length === 0 ? (
-                        <p className="text-sm text-muted-foreground py-6 text-center rounded-lg border border-dashed">
-                          No type breakdown.
-                        </p>
-                      ) : (
-                        <ChartContainer
-                          config={{ count: { label: "Events", color: "var(--chart-3)" } }}
-                          className="aspect-auto h-[min(280px,50vh)] w-full"
-                        >
-                          <BarChart
-                            data={mixRows}
-                            layout="vertical"
-                            margin={{ left: 4, right: 16, top: 8, bottom: 8 }}
+                      <ChartContainer
+                        config={extensionEventsChartConfig as ChartConfig}
+                        className={cn(
+                          "aspect-auto w-full",
+                          embedded
+                            ? "min-h-0 flex-1"
+                            : "h-[min(22rem,45vh)] min-h-[240px]",
+                        )}
+                      >
+                          <AreaChart
+                            accessibilityLayer
+                            data={chartRows}
+                            margin={{ top: 2, right: 10, left: 0, bottom: 0 }}
                           >
-                            <CartesianGrid horizontal={false} strokeDasharray="3 3" className="stroke-border/60" />
-                            <XAxis type="number" tickLine={false} axisLine={false} className="text-xs tabular-nums" />
-                            <YAxis
-                              type="category"
-                              dataKey="label"
-                              width={100}
+                            <defs>
+                              <linearGradient id="euFillVisit" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="var(--color-visit)" stopOpacity={0.8} />
+                                <stop offset="95%" stopColor="var(--color-visit)" stopOpacity={0.08} />
+                              </linearGradient>
+                              <linearGradient id="euFillPopup" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="var(--color-popup)" stopOpacity={0.85} />
+                                <stop offset="95%" stopColor="var(--color-popup)" stopOpacity={0.08} />
+                              </linearGradient>
+                              <linearGradient id="euFillNotification" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="var(--color-notification)" stopOpacity={0.85} />
+                                <stop offset="95%" stopColor="var(--color-notification)" stopOpacity={0.08} />
+                              </linearGradient>
+                              <linearGradient id="euFillAd" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="var(--color-ad)" stopOpacity={0.85} />
+                                <stop offset="95%" stopColor="var(--color-ad)" stopOpacity={0.08} />
+                              </linearGradient>
+                              <linearGradient id="euFillRedirect" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="var(--color-redirect)" stopOpacity={0.85} />
+                                <stop offset="95%" stopColor="var(--color-redirect)" stopOpacity={0.08} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid vertical={false} strokeDasharray="3 3" className="stroke-border/60" />
+                            <XAxis
+                              dataKey="date"
                               tickLine={false}
                               axisLine={false}
-                              tick={{ fontSize: 12 }}
+                              tickMargin={10}
+                              minTickGap={28}
+                              tickFormatter={(value) => {
+                                const date = new Date(value)
+                                return date.toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                })
+                              }}
                             />
-                            <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
-                            <Bar dataKey="value" name="Events" radius={4} fill="var(--chart-3)" />
-                          </BarChart>
-                        </ChartContainer>
-                      )}
-                    </div>
-
-                    <div className="space-y-2 min-w-0">
-                      <h3 className="text-sm font-medium">Share by type</h3>
-                      {mixRows.length <= 1 ? (
-                        <p className="text-sm text-muted-foreground py-6 text-center rounded-lg border border-dashed">
-                          {mixRows.length === 0
-                            ? "No type breakdown."
-                            : "Need at least two event types in range for a pie view."}
-                        </p>
-                      ) : (
-                        <ChartContainer
-                          config={pieChartConfig}
-                          className="mx-auto aspect-square h-[min(280px,50vh)] max-h-[320px] w-full max-w-[320px] [&_.recharts-responsive-container]:!max-h-[320px]"
-                        >
-                          <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-                            <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                            <ChartLegend
-                              verticalAlign="middle"
-                              align="right"
-                              layout="vertical"
-                              wrapperStyle={{ width: "38%", paddingLeft: 6, fontSize: 12 }}
-                              content={
-                                <ChartLegendContent
-                                  verticalAlign="middle"
-                                  className="h-full !pt-0 !pb-0 flex-col items-start justify-center gap-1.5 pl-1 text-left"
-                                />
-                              }
+                            <YAxis
+                              width={48}
+                              allowDecimals={false}
+                              tickLine={false}
+                              axisLine={false}
+                              tickMargin={8}
+                              tickFormatter={formatYAxisTick}
+                              domain={[0, yAxisTop]}
+                              ticks={yAxisTicks}
                             />
-                            <Pie
-                              data={pieData}
-                              dataKey="value"
-                              nameKey="name"
-                              cx="42%"
-                              cy="50%"
-                              innerRadius="48%"
-                              outerRadius="88%"
-                              paddingAngle={2}
-                              strokeWidth={1}
-                            >
-                              {pieData.map((entry, index) => (
-                                <Cell
-                                  key={entry.name}
-                                  fill={PIE_COLORS[index % PIE_COLORS.length]}
-                                />
-                              ))}
-                            </Pie>
-                          </PieChart>
-                        </ChartContainer>
-                      )}
-                      <p className="text-xs text-muted-foreground">
-                        Same counts as the bar chart; legend shows type and color.
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 min-w-0">
-                    <h3 className="text-sm font-medium flex items-center gap-2">
-                      <IconWorld className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                      Top domains
-                    </h3>
-                    {data && !data.topDomains.length ? (
-                      <p className="text-sm text-muted-foreground py-6 text-center rounded-lg border border-dashed">
-                        No domain data in this range.
-                      </p>
-                    ) : data ? (
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Domain</TableHead>
-                            <TableHead className="text-right tabular-nums">Visits</TableHead>
-                            <TableHead className="text-right tabular-nums">Served</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {data.topDomains.map((row) => (
-                            <TableRow key={row.domain}>
-                              <TableCell
-                                className="font-mono text-xs max-w-[200px] truncate"
-                                title={row.domain}
-                              >
-                                {row.domain}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {row.visits.toLocaleString()}
-                              </TableCell>
-                              <TableCell className="text-right tabular-nums">
-                                {row.serves.toLocaleString()}
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    ) : null}
-                  </div>
+                            <ChartTooltip
+                              cursor={{ stroke: "var(--border)", strokeWidth: 1, strokeDasharray: "4 4" }}
+                              content={<ExtensionEventsChartTooltip />}
+                            />
+                            <Area
+                              dataKey="visit"
+                              type="monotone"
+                              strokeWidth={1.5}
+                              fill="url(#euFillVisit)"
+                              fillOpacity={0.35}
+                              stroke="var(--color-visit)"
+                            />
+                            <Area
+                              dataKey="popup"
+                              type="monotone"
+                              strokeWidth={1.5}
+                              fill="url(#euFillPopup)"
+                              fillOpacity={0.35}
+                              stroke="var(--color-popup)"
+                            />
+                            <Area
+                              dataKey="notification"
+                              type="monotone"
+                              strokeWidth={1.5}
+                              fill="url(#euFillNotification)"
+                              fillOpacity={0.35}
+                              stroke="var(--color-notification)"
+                            />
+                            <Area
+                              dataKey="ad"
+                              type="monotone"
+                              strokeWidth={1.5}
+                              fill="url(#euFillAd)"
+                              fillOpacity={0.35}
+                              stroke="var(--color-ad)"
+                            />
+                            <Area
+                              dataKey="redirect"
+                              type="monotone"
+                              strokeWidth={1.5}
+                              fill="url(#euFillRedirect)"
+                              fillOpacity={0.35}
+                              stroke="var(--color-redirect)"
+                            />
+                          </AreaChart>
+                      </ChartContainer>
+                    )}
+                  </AnimatedSection>
                 </>
               )}
             </>
           )}
-        </CardContent>
-      </Card>
-    </section>
+    </CardContent>
+  )
+
+  if (embedded) {
+    return (
+      <div
+        aria-label="Extension activity analytics"
+        className={cn(
+          "@container/analytics flex h-full min-h-0 flex-col gap-3 overflow-hidden",
+          className,
+        )}
+      >
+        {header}
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <Card
+      aria-label="Extension activity analytics"
+      className={cn(
+        "@container/analytics gap-3 overflow-hidden border-border bg-card/40 py-4 shadow-none",
+        className,
+      )}
+    >
+      {header}
+      {body}
+    </Card>
   )
 }

@@ -4,12 +4,17 @@ import { database as db } from '@/db';
 import { endUsers, payments } from '@/db/schema';
 import { getSessionWithRole } from '@/lib/dal';
 import { getEndUserDashboardSnapshot } from '@/lib/end-user-dashboard';
+import {
+  END_USER_ANALYTICS_RANGE_DAYS,
+  getEndUserAnalyticsBundle,
+} from '@/lib/end-user-analytics';
 import { endUserPublicPayload } from '@/lib/enduser-auth';
 import {
   EndUserDetailClient,
   type EndUserDetailInitialUser,
   type EndUserPaymentListItem,
 } from '@/components/end-user-detail-client';
+import type { AnalyticsPayload } from '@/components/end-user-analytics-section';
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 
@@ -47,17 +52,19 @@ export default async function EndUserDetailPage({
 
   const { id } = await params;
 
-  const [user] = await db.select().from(endUsers).where(eq(endUsers.id, id)).limit(1);
-  if (!user) notFound();
-
-  const [paymentRows, initialDashboard] = await Promise.all([
+  const [userRows, paymentRows, initialDashboard, analyticsBundle] = await Promise.all([
+    db.select().from(endUsers).where(eq(endUsers.id, id)).limit(1),
     db
       .select()
       .from(payments)
       .where(eq(payments.endUserId, id))
       .orderBy(desc(payments.paymentDate), desc(payments.createdAt)),
     getEndUserDashboardSnapshot(id),
+    getEndUserAnalyticsBundle(sessionWithRole.role, sessionWithRole.user.id, id, '7d'),
   ]);
+
+  const [user] = userRows;
+  if (!user) notFound();
 
   const raw = endUserPublicPayload(user);
   const initialUser: EndUserDetailInitialUser = {
@@ -92,8 +99,18 @@ export default async function EndUserDetailPage({
     createdAt: p.createdAt.toISOString(),
   }));
 
+  const initialAnalytics: AnalyticsPayload = {
+    summary: analyticsBundle.summary,
+    series: analyticsBundle.series,
+    topDomains: analyticsBundle.topDomains,
+    range: analyticsBundle.range,
+    start: analyticsBundle.start,
+    end: analyticsBundle.end,
+    rangeDays: END_USER_ANALYTICS_RANGE_DAYS['7d'],
+  };
+
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 p-4 md:p-6">
+    <div className="flex w-full min-w-0 flex-col gap-6 px-4 py-4 md:px-6 md:py-6">
       <Suspense
         fallback={<div className="min-h-[320px] animate-pulse rounded-xl bg-muted/40" aria-hidden />}
       >
@@ -101,6 +118,7 @@ export default async function EndUserDetailPage({
           initialUser={initialUser}
           initialPayments={initialPayments}
           initialDashboard={initialDashboard}
+          initialAnalytics={initialAnalytics}
           isAdmin={isAdmin}
         />
       </Suspense>

@@ -61,7 +61,7 @@ export async function PUT(
     }
 
     const { id } = await params;
-    const [existing] = await db.select().from(campaigns).where(eq(campaigns.id, id)).limit(1);
+    const existing = await getAccessibleCampaignById(sessionWithRole, id);
     if (!existing) {
       return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
     }

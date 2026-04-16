@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import { platforms, redirects } from '@/db/schema';
+import { platforms } from '@/db/schema';
 import { eq, and, ne } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
 import { normalizeDomain } from '@/lib/domain-utils';
-import { findRedirectConflictForPlatform } from '@/lib/redirect-platform-conflict';
+import { queryRedirectConflictForPlatform } from '@/lib/redirect-platform-conflict-queries';
 import { getLinkedCampaignCountForPlatformId } from '@/lib/campaign-linked-counts';
 import { publishPlatformsUpdated } from '@/lib/redis';
 
@@ -64,13 +64,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
     // Normalize domain (extract hostname from URL if needed)
     const normalizedDomain = normalizeDomain(domain);
 
-    const redirectRows = await db
-      .select({
-        sourceDomain: redirects.sourceDomain,
-        includeSubdomains: redirects.includeSubdomains,
-      })
-      .from(redirects);
-    const redirectHit = findRedirectConflictForPlatform(normalizedDomain, redirectRows);
+    const redirectHit = await queryRedirectConflictForPlatform(normalizedDomain);
     if (redirectHit !== undefined) {
       return NextResponse.json(
         {

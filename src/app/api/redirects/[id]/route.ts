@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { database as db } from '@/db';
-import { platforms, redirects } from '@/db/schema';
+import { redirects } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import { getSessionWithRole } from '@/lib/dal';
-import { findPlatformDomainConflictForRedirect } from '@/lib/redirect-platform-conflict';
+import { queryPlatformConflictForRedirect } from '@/lib/redirect-platform-conflict-queries';
 import { getLinkedCampaignCountForRedirectId } from '@/lib/campaign-linked-counts';
 import { publishRedirectsUpdated } from '@/lib/redis';
 
@@ -58,12 +58,7 @@ export async function PUT(request: NextRequest, context: RouteContext) {
 
     const trimmedSource = String(sourceDomain).trim();
     const includeSub = Boolean(includeSubdomains);
-    const platformRows = await db.select({ domain: platforms.domain }).from(platforms);
-    const conflictHost = findPlatformDomainConflictForRedirect(
-      trimmedSource,
-      includeSub,
-      platformRows
-    );
+    const conflictHost = await queryPlatformConflictForRedirect(trimmedSource, includeSub);
     if (conflictHost !== undefined) {
       return NextResponse.json(
         {

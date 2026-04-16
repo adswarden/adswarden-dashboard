@@ -2,10 +2,12 @@ interface KpiCardProps {
   label: string;
   value: string | number;
   change?: number | null;
+  /** Shown on hover for the % (e.g. what is being compared to last month). */
+  changeHint?: string;
   empty?: boolean;
 }
 
-export function KpiCard({ label, value, change, empty }: KpiCardProps) {
+export function KpiCard({ label, value, change, changeHint, empty }: KpiCardProps) {
   const showChange = change !== undefined && change !== null && !empty;
   const isPositive = showChange && change > 0;
   const isNegative = showChange && change < 0;
@@ -19,6 +21,7 @@ export function KpiCard({ label, value, change, empty }: KpiCardProps) {
         </span>
         {showChange && (
           <span
+            title={changeHint}
             className={`text-xs font-medium tabular-nums ${isPositive ? 'text-emerald-600 dark:text-emerald-400' : isNegative ? 'text-red-600 dark:text-red-400' : 'text-muted-foreground'
               }`}
           >

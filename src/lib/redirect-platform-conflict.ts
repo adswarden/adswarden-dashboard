@@ -10,9 +10,9 @@ export type RedirectRuleRow = {
 export function findPlatformDomainConflictForRedirect(
   sourceDomain: string,
   includeSubdomains: boolean,
-  platforms: PlatformDomainRow[]
+  platformList: PlatformDomainRow[]
 ): string | undefined {
-  for (const p of platforms) {
+  for (const p of platformList) {
     const d = (p.domain ?? '').trim();
     if (!d) continue;
     if (redirectSourceMatchesVisit(d, sourceDomain, includeSubdomains)) {
@@ -25,11 +25,11 @@ export function findPlatformDomainConflictForRedirect(
 /** First redirect rule that matches the platform hostname, if any. */
 export function findRedirectConflictForPlatform(
   platformDomain: string,
-  redirects: RedirectRuleRow[]
+  redirectList: RedirectRuleRow[]
 ): RedirectRuleRow | undefined {
   const host = platformDomain.trim();
   if (!host) return undefined;
-  for (const r of redirects) {
+  for (const r of redirectList) {
     if (redirectSourceMatchesVisit(host, r.sourceDomain, r.includeSubdomains)) {
       return r;
     }

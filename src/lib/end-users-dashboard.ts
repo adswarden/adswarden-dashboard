@@ -61,8 +61,18 @@ const sessionStats = db
   .groupBy(enduserSessions.endUserId)
   .as('session_stats');
 
-/** Text equality so `end_users.id` (uuid) joins legacy `end_user_id` stored as varchar. */
-const endUserSessionJoin = sql`cast(${endUsers.id} as text) = cast(${sessionStats.endUserId} as text)`;
+/** Direct uuid comparison — both columns are uuid so no cast needed. */
+const endUserSessionJoin = eq(endUsers.id, sessionStats.endUserId);
+
+/** Pre-aggregated impression counts per user_identifier — avoids N+1 correlated subquery. */
+const impressionCountsSubquery = db
+  .select({
+    userIdentifier: enduserEvents.userIdentifier,
+    impressionCount: sql<number>`count(*)::int`.as('impression_count'),
+  })
+  .from(enduserEvents)
+  .groupBy(enduserEvents.userIdentifier)
+  .as('impression_counts');
 
 /** Partial match across email, identifier, UUID text, and display name. */
 function endUserMultiFieldSearchOr(raw: string): SQL {
@@ -258,14 +268,11 @@ export function buildEndUsersListBaseQuery(
       endDate: endUsers.endDate,
       createdAt: endUsers.createdAt,
       lastSessionAt: sessionStats.lastSessionAt,
-      impressionCount: sql<number>`(
-        select count(*)::int
-        from ${enduserEvents}
-        where ${enduserEvents.userIdentifier} = ${endUsers.identifier}
-      )`.as('impression_count'),
+      impressionCount: sql<number>`coalesce(${impressionCountsSubquery.impressionCount}, 0)`,
     })
     .from(endUsers)
     .leftJoin(sessionStats, endUserSessionJoin)
+    .leftJoin(impressionCountsSubquery, eq(endUsers.identifier, impressionCountsSubquery.userIdentifier))
     .$dynamic();
 
   if (whereClause) {
@@ -302,11 +309,18 @@ export async function countEndUsersListQuery(
   const conditions = buildEndUsersWhereConditions(filters);
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
+  // Only join sessionStats when lastSeen filters are active — those conditions reference it.
+  // Omitting the join when unused avoids a full grouped scan of enduserSessions just to count.
+  const needsSessionJoin = !!(filters.lastSeenFrom || filters.lastSeenTo);
+
   let q = db
     .select({ n: sql<number>`count(${endUsers.id})::int`.as('n') })
     .from(endUsers)
-    .leftJoin(sessionStats, endUserSessionJoin)
     .$dynamic();
+
+  if (needsSessionJoin) {
+    q = q.leftJoin(sessionStats, endUserSessionJoin);
+  }
 
   if (whereClause) {
     q = q.where(whereClause);

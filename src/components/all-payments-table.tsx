@@ -10,6 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { HumanReadableDate } from '@/components/human-readable-date';
 import { Badge } from '@/components/ui/badge';
 import type { PaymentListRow } from '@/lib/payments-types';
 
@@ -51,7 +52,7 @@ export function AllPaymentsTable({ rows }: AllPaymentsTableProps) {
         </TableCaption>
         <TableHeader>
           <TableRow>
-            <TableHead scope="col" className="min-w-[140px]">
+                       <TableHead scope="col" className="min-w-[128px] max-w-[200px]">
               Payment date
             </TableHead>
             <TableHead scope="col" className="min-w-[160px]">
@@ -84,8 +85,8 @@ export function AllPaymentsTable({ rows }: AllPaymentsTableProps) {
               const descTitle = desc.length > 80 ? desc : undefined;
               return (
                 <TableRow key={p.id}>
-                  <TableCell className="whitespace-nowrap text-sm tabular-nums text-muted-foreground">
-                    {new Date(p.paymentDate).toLocaleString()}
+                                   <TableCell className="text-sm text-muted-foreground min-w-0 align-top whitespace-normal">
+                    <HumanReadableDate date={new Date(p.paymentDate)} dense />
                   </TableCell>
                   <TableCell className="text-sm min-w-0">
                     <Link

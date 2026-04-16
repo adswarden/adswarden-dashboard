@@ -15,6 +15,11 @@ import { endUserPublicPayload } from '@/lib/enduser-auth';
 import { userIdentifierForEndUser } from '@/lib/enduser-merge';
 import { getCanonicalDisplayDomain } from '@/lib/domain-utils';
 import { formatExtensionCampaignScalar } from '@/lib/extension-campaign-scalars';
+import {
+  getCachedActiveCampaigns,
+  setCachedActiveCampaigns,
+  EXTENSION_CAMPAIGNS_KEYS,
+} from '@/lib/redis';
 
 export type ExtensionLiveCampaignPayload = {
   id: string;
@@ -235,6 +240,9 @@ export const extensionCampaignSelectShape = {
 export async function fetchActiveCampaignRowsForExtension(
   now: Date = new Date()
 ): Promise<CampaignSelectRow[]> {
+  const cached = await getCachedActiveCampaigns<CampaignSelectRow>(EXTENSION_CAMPAIGNS_KEYS.all);
+  if (cached) return cached;
+
   const campaignRows = await db
     .select(extensionCampaignSelectShape)
     .from(campaigns)
@@ -245,13 +253,18 @@ export async function fetchActiveCampaignRowsForExtension(
         or(isNull(campaigns.endDate), gte(campaigns.endDate, now))
       )
     );
-  return campaignRows as CampaignSelectRow[];
+  const rows = campaignRows as CampaignSelectRow[];
+  await setCachedActiveCampaigns(EXTENSION_CAMPAIGNS_KEYS.all, rows);
+  return rows;
 }
 
 /** Active ads and popup campaigns (for `/api/extension/serve/ads`). */
 export async function fetchActiveServeAdsCampaignRowsForExtension(
   now: Date = new Date()
 ): Promise<CampaignSelectRow[]> {
+  const cached = await getCachedActiveCampaigns<CampaignSelectRow>(EXTENSION_CAMPAIGNS_KEYS.ads);
+  if (cached) return cached;
+
   const campaignRows = await db
     .select(extensionCampaignSelectShape)
     .from(campaigns)
@@ -263,13 +276,18 @@ export async function fetchActiveServeAdsCampaignRowsForExtension(
         or(eq(campaigns.campaignType, 'ads'), eq(campaigns.campaignType, 'popup'))
       )
     );
-  return campaignRows as CampaignSelectRow[];
+  const rows = campaignRows as CampaignSelectRow[];
+  await setCachedActiveCampaigns(EXTENSION_CAMPAIGNS_KEYS.ads, rows);
+  return rows;
 }
 
 /** Active redirect campaigns (for `/api/extension/serve/redirects`), date window in SQL. */
 export async function fetchActiveRedirectCampaignRowsForExtension(
   now: Date = new Date()
 ): Promise<CampaignSelectRow[]> {
+  const cached = await getCachedActiveCampaigns<CampaignSelectRow>(EXTENSION_CAMPAIGNS_KEYS.redirects);
+  if (cached) return cached;
+
   const campaignRows = await db
     .select(extensionCampaignSelectShape)
     .from(campaigns)
@@ -281,7 +299,9 @@ export async function fetchActiveRedirectCampaignRowsForExtension(
         eq(campaigns.campaignType, 'redirect')
       )
     );
-  return campaignRows as CampaignSelectRow[];
+  const rows = campaignRows as CampaignSelectRow[];
+  await setCachedActiveCampaigns(EXTENSION_CAMPAIGNS_KEYS.redirects, rows);
+  return rows;
 }
 
 export async function fetchExtensionPlatformsList(): Promise<{ id: string; domain: string }[]> {
